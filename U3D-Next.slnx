@@ -1,0 +1,5 @@
+﻿<Solution>
+  <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="U3D.Net.csproj" />
+  <Project Path="U3D.Runtime.csproj" />
+</Solution>

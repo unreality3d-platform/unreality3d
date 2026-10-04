@@ -1,0 +1,264 @@
+# .github/workflows/u3d-template-update-automation.yml
+# Automated Update Package Generation with Version Tracking
+#
+# Features:
+# - Auto-updates version.txt with timestamp on every commit
+# - Creates selective update .unitypackage (no full ZIP)
+# - Integrates with existing infrastructure and chunking system
+# - Version tracking for Creator Dashboard comparison
+#
+# Triggers:
+# - Manual dispatch only: always generates update package
+#
+# Third-party actions are pinned to commit SHAs. Trailing comment shows the version.
+# The job-level repository_owner condition is required. Do not remove either, and
+# see Technical Lessons Reference before changing them.
+
+name: U3D Template Update Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version tag (auto-generated if empty)'
+        required: false
+        type: string
+      release_notes:
+        description: 'Release notes (optional - auto-generated from commits)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  update-version-and-build:
+    name: Generate Update Package
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'unreality3d-platform'
+    
+    outputs:
+      version_tag: ${{ steps.version.outputs.tag }}
+      version_timestamp: ${{ steps.version.outputs.timestamp }}
+      
+    steps:
+      - name: Checkout u3d-template repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          fetch-depth: 0
+          lfs: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # No change detection gate: manual dispatch always runs.
+
+      - name: Generate version and update version file
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version_tag }}" ]; then
+            VERSION_TAG="${{ github.event.inputs.version_tag }}"
+            TIMESTAMP=$(echo "$VERSION_TAG" | sed 's/u3d-update-//')
+          else
+            TIMESTAMP=$(date +%m-%d-%y-%H-%M-%S)
+            VERSION_TAG="u3d-update-${TIMESTAMP}"
+          fi
+          
+          mkdir -p Assets/U3D/Resources
+          echo "$TIMESTAMP" > Assets/U3D/Resources/version.txt
+          
+          echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+
+      - name: Commit updated version file
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add Assets/U3D/Resources/version.txt
+          
+          # Only commit if there are changes (avoids failure on manual re-runs)
+          if git diff --cached --quiet; then
+            echo "Version file unchanged, skipping commit"
+          else
+            git commit -m "Auto-update template version to ${{ steps.version.outputs.timestamp }}"
+            git push
+          fi
+
+      - name: Cache Unity Library
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c  # v3.5.0
+        with:
+          path: Library
+          key: Library-u3d-template-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: Library-u3d-template-
+
+      # CHANGE: Added manualExit because TemplatePackageExporter calls
+      # EditorApplication.Exit() itself. Without this, game-ci's default
+      # -quit flag conflicts with the script's own exit handling.
+      # Removed customParameters -- version is read from version.txt now.
+      - name: Build update package with Unity
+        uses: game-ci/unity-builder@1d4ee0697f193f54668e98961d79907911f4b4f2  # v4.8.1
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: auto
+          buildMethod: U3D.Editor.Tools.TemplatePackageExporter.ExportUpdatePackageCommandLine
+          manualExit: true
+          # targetPlatform not needed -- we're exporting a package, not building
+
+      - name: Verify generated package
+        run: |
+          echo "Checking Build/Updates/ for package..."
+          ls -la Build/Updates/ 2>/dev/null || echo "Build/Updates/ directory not found"
+          
+          # Find any .unitypackage file (version may vary)
+          PACKAGE=$(find Build/Updates/ -name "*.unitypackage" -print -quit 2>/dev/null)
+          
+          if [ -n "$PACKAGE" ]; then
+            size=$(stat -c%s "$PACKAGE")
+            echo "Update package found: $PACKAGE ($(($size / 1024))KB)"
+          else
+            echo "ERROR: No .unitypackage found in Build/Updates/"
+            echo "Unity build log may contain details above"
+            exit 1
+          fi
+
+      - name: Upload template update package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ${{ steps.version.outputs.tag }}
+          path: Build/Updates/*.unitypackage
+          retention-days: 90
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: update-version-and-build
+    if: github.repository_owner == 'unreality3d-platform'
+    
+    steps:
+      - name: Checkout (for commit history)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Download update package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ${{ needs.update-version-and-build.outputs.version_tag }}
+          path: release-assets
+
+      # CHANGE: Rewrote release notes generation.
+      # - Collects all commits since last u3d-update tag
+      # - Filters out auto-version and merge commits
+      # - Falls back to omitting What's New if no meaningful commits found
+      # - Manual release_notes input overrides everything
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Find the previous release tag
+          PREV_TAG=$(git tag --list 'u3d-update-*' --sort=-creatordate | head -1)
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous release tag: $PREV_TAG"
+            COMMIT_RANGE="${PREV_TAG}..HEAD"
+          else
+            echo "No previous release tag found, using last 20 commits"
+            COMMIT_RANGE="HEAD~20..HEAD"
+          fi
+          
+          # Collect meaningful commits, filtering out auto-version and merge commits
+          CHANGELOG=$(git log "$COMMIT_RANGE" --pretty=format:"- %s" \
+            --grep="Auto-update template version" --invert-grep \
+            | grep -v "^- Merge " || true)
+          
+          # Manual release notes override auto-generated changelog
+          if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+            CHANGELOG="${{ github.event.inputs.release_notes }}"
+          fi
+          
+          # Build the static portion of release notes
+          cat > release_notes.md << 'EOF'
+          # U3D Template Update
+
+          **Always download the LATEST update** -- older versions are kept for reference only.
+
+          ## Check Your Current Template Version
+
+          **Before downloading**, check if you need this update:
+
+          1. **In Unity Editor**: Go to `U3D > Creator Dashboard`
+          2. **Look for**: "Template Version" display at the top
+          3. **Compare**: Your version with this release
+
+          **Example**: 
+          - Your template version: `01-10-25-09-15-30`
+          - This update version: (see release title)
+          - **You need this update** if your version is older
+
+          ## How to Update Your Project
+
+          ### Single Update (Most Common)
+          1. **Backup your entire project folder** first
+          2. **Download the .unitypackage below**
+          3. In Unity: `Assets > Import Package > Custom Package`
+          4. **Select** the downloaded `.unitypackage` file
+          5. **CRITICAL**: Review the import dialog carefully
+          6. **Uncheck** any files you've customized:
+             - Your scenes (Assets/Scenes/)
+             - Your materials, textures, models
+             - Your custom scripts
+             - Any files you've modified
+          7. **Keep checked** all U3D core files (Assets/U3D/, Assets/U3D_SDK/)
+          8. Click **Import**
+          9. **Verify** your template version updated in Creator Dashboard
+
+          ## Troubleshooting After Update
+
+          If a GameObject loses U3D functionality after updating:
+          1. Select the GameObject in the Hierarchy
+          2. In the Inspector, remove any missing or outdated U3D components
+          3. Re-apply the feature from the Creator Dashboard (toolbar → U3D)
+
+          **Tip**: To get the latest demo scene, delete `Assets/U3D/U3D_Demo` before importing the update.
+
+          ## Important Notes
+
+          - **Always backup** your entire project folder before updating
+          - **Check your current version** in Creator Dashboard first
+          - **Uncheck your custom files** during import to preserve your work
+          - **Test thoroughly** after each update
+
+          ## Need Help?
+
+          - **Documentation**: unreality3d.com/docs
+          - **Template Download**: unreality3d.com (for new users)
+          - **Support**: Contact us if you encounter update issues
+
+          ---
+          *This update is for existing template users only. New users should download the full template from unreality3d.com*
+          EOF
+          
+          # Append What's New only if there are meaningful commits
+          if [ -n "$CHANGELOG" ]; then
+            echo "" >> release_notes.md
+            echo "## What's New in This Update" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "$CHANGELOG" >> release_notes.md
+          fi
+          
+          echo "notes<<DELIMITER" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "DELIMITER" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844  # v1 (v0.1.15)
+        with:
+          tag_name: ${{ needs.update-version-and-build.outputs.version_tag }}
+          name: "${{ needs.update-version-and-build.outputs.version_tag }}"
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: |
+            release-assets/*.unitypackage
+          draft: false
+          prerelease: false

@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c72e5e4cbf75c2a41acad769ed3047ac, type: 3}
+  m_Name: U3DRoomIdentityData
+  m_EditorClassIdentifier: U3D.Runtime::U3D.Networking.U3DRoomIdentityData
+  creator: spacedolphin
+  product: inputsystemtest
+  entries:
+  - ScenePath: Assets/U3D/U3D_Demo/U3DDemoScene.unity
+    Guid: 71f7a246943425141a417dfea3398c0c

@@ -1,0 +1,299 @@
+# .github/workflows/reassemble-chunks.yml
+# Unity WebGL Large File Chunk Reassembly Workflow with Direct GitHub Pages Deployment
+#
+# UPDATED: Cleans ALL existing Build files before reassembly to prevent stale file issues
+# This ensures old hash-based files don't persist across deployments
+#
+# Third-party actions are pinned to commit SHAs. Trailing comment shows the version.
+# See Technical Lessons Reference before changing any pin.
+
+name: Reassemble Unity Chunks
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_for_chunks:
+        description: 'Check and reassemble Unity chunk files'
+        required: false
+        default: 'true'
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Prevent concurrent deployments
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Reassemble and Prepare for Deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 1
+                
+      - name: Check for chunk files
+        id: check_chunks
+        run: |
+          echo "🔍 Checking for Unity chunk files..."
+          
+          # Look for both .data.part* and .wasm.part* files
+          chunk_files=$(find . -type f \( -name "*.data.part*" -o -name "*.wasm.part*" \))
+          
+          if [ -n "$chunk_files" ]; then
+            echo "📦 Found chunk files:"
+            echo "$chunk_files"
+            echo "chunks_found=true" >> $GITHUB_OUTPUT
+            
+            # Count both types of chunks
+            chunk_count=$(echo "$chunk_files" | wc -l)
+            echo "chunk_count=$chunk_count" >> $GITHUB_OUTPUT
+            
+            # List unique base files for both types
+            base_files=$(echo "$chunk_files" | sed -E 's/\.part[0-9]+$//' | sort -u)
+            echo "Base files to reassemble:"
+            echo "$base_files"
+            
+          else
+            echo "✅ No chunk files found - repository already has complete files"
+            echo "chunks_found=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Reassemble chunk files
+        if: steps.check_chunks.outputs.chunks_found == 'true'
+        run: |
+          echo "🔄 Starting chunk reassembly process..."
+          echo "📊 Total chunks found: ${{ steps.check_chunks.outputs.chunk_count }}"
+          
+          files_reassembled=0
+          total_size=0
+          
+          # Find all unique base files for both .data and .wasm
+          base_files=$(find . -type f \( -name "*.data.part*" -o -name "*.wasm.part*" \) | sed -E 's/\.part[0-9]+$//' | sort -u)
+          
+          for basefile in $base_files; do
+            echo ""
+            echo "📦 Processing: $basefile"
+            
+            # Find all parts for this file in the same directory
+            dir=$(dirname "$basefile")
+            filename=$(basename "$basefile")
+            parts=$(find "$dir" -maxdepth 1 -type f -name "${filename}.part*" | sort -V)
+            part_count=$(echo "$parts" | wc -w)
+            
+            if [ $part_count -eq 0 ]; then
+              echo "⚠️ No parts found for $basefile"
+              continue
+            fi
+            
+            echo "🔍 Found $part_count parts for $filename:"
+            for part in $parts; do
+              part_size=$(stat -c%s "$part" 2>/dev/null || echo "0")
+              echo "  - $(basename "$part") ($(echo $part_size | awk '{printf "%.2f MB", $1/1024/1024}'))"
+            done
+            
+            # Verify all parts exist and are readable
+            all_parts_valid=true
+            for part in $parts; do
+              if [ ! -f "$part" ] || [ ! -r "$part" ]; then
+                echo "❌ Part not accessible: $part"
+                all_parts_valid=false
+                break
+              fi
+            done
+            
+            if [ "$all_parts_valid" = false ]; then
+              echo "❌ Skipping $basefile due to missing/invalid parts"
+              continue
+            fi
+            
+            # Calculate total size of parts
+            part_size=0
+            for part in $parts; do
+              size=$(stat -c%s "$part" 2>/dev/null || echo "0")
+              part_size=$((part_size + size))
+            done
+            
+            echo "📏 Total size of parts: $(echo $part_size | awk '{printf "%.2f MB", $1/1024/1024}')"
+            
+            # Reassemble with verification
+            echo "🔧 Reassembling $basefile..."
+            
+            {
+              cat $parts > "$basefile.tmp"
+            } || {
+              echo "❌ Failed to concatenate parts for $basefile"
+              continue
+            }
+            
+            # Verify reassembled file size
+            reassembled_size=$(stat -c%s "$basefile.tmp" 2>/dev/null || echo "0")
+            
+            if [ "$reassembled_size" -eq "$part_size" ]; then
+              # Move to final location
+              mv "$basefile.tmp" "$basefile"
+              
+              echo "✅ Successfully reassembled $basefile"
+              echo "📏 Final size: $(echo $reassembled_size | awk '{printf "%.2f MB", $1/1024/1024}')"
+              
+              files_reassembled=$((files_reassembled + 1))
+              total_size=$((total_size + reassembled_size))
+              
+              # Remove chunk files after successful reassembly
+              for part in $parts; do
+                rm "$part"
+                echo "🗑️ Removed chunk: $(basename "$part")"
+              done
+              
+            else
+              echo "❌ Size mismatch for $basefile (expected: $part_size, got: $reassembled_size)"
+              rm -f "$basefile.tmp"
+            fi
+          done
+          
+          echo ""
+          echo "📊 Reassembly Summary:"
+          echo "   🔧 Files reassembled: $files_reassembled"
+          echo "   📦 Total size: $(echo $total_size | awk '{printf "%.2f MB", $1/1024/1024}')"
+          
+          if [ $files_reassembled -eq 0 ]; then
+            echo "⚠️ No files were reassembled - check logs for errors"
+            exit 1
+          fi
+          
+      - name: Verify Unity WebGL structure
+        run: |
+          echo "🔍 Verifying Unity WebGL file structure..."
+          echo ""
+          
+          unity_files_found=0
+          
+          # Check for .data files
+          if find . -name "*.data" -type f 2>/dev/null | head -1 | grep -q .; then
+            data_files=$(find . -name "*.data" -type f 2>/dev/null)
+            data_count=$(echo "$data_files" | wc -l)
+            echo "✅ Found $data_count .data file(s):"
+            echo "$data_files" | while read f; do
+              size=$(stat -c%s "$f" 2>/dev/null || echo "0")
+              echo "   📄 $f ($(echo $size | awk '{printf "%.2f MB", $1/1024/1024}'))"
+            done
+            unity_files_found=$((unity_files_found + 1))
+          else
+            echo "❌ No .data files found"
+          fi
+          
+          echo ""
+          
+          # Check for .wasm files
+          if find . -name "*.wasm" -type f 2>/dev/null | head -1 | grep -q .; then
+            wasm_files=$(find . -name "*.wasm" -type f 2>/dev/null)
+            wasm_count=$(echo "$wasm_files" | wc -l)
+            echo "✅ Found $wasm_count .wasm file(s):"
+            echo "$wasm_files" | while read f; do
+              size=$(stat -c%s "$f" 2>/dev/null || echo "0")
+              echo "   📄 $f ($(echo $size | awk '{printf "%.2f MB", $1/1024/1024}'))"
+            done
+            unity_files_found=$((unity_files_found + 1))
+          else
+            echo "❌ No .wasm files found"
+          fi
+          
+          echo ""
+          
+          # Check for .framework.js files
+          if find . -name "*.framework.js" -type f 2>/dev/null | head -1 | grep -q .; then
+            echo "✅ .framework.js file found:"
+            find . -name "*.framework.js" -type f -exec ls -lh {} \;
+            unity_files_found=$((unity_files_found + 1))
+          else
+            echo "❌ No .framework.js files found"
+          fi
+          
+          echo ""
+          
+          # Check for .loader.js files
+          if find . -name "*.loader.js" -type f 2>/dev/null | head -1 | grep -q .; then
+            echo "✅ .loader.js file found:"
+            find . -name "*.loader.js" -type f -exec ls -lh {} \;
+            unity_files_found=$((unity_files_found + 1))
+          else
+            echo "⚠️ No .loader.js files found"
+          fi
+          
+          echo ""
+          
+          # Check for index.html
+          if [ -f "index.html" ]; then
+            echo "✅ index.html file found"
+            unity_files_found=$((unity_files_found + 1))
+          else
+            echo "⚠️ No index.html found"
+          fi
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Unity WebGL files found: $unity_files_found/5"
+          
+          # Check for any remaining chunk files (should be none)
+          remaining_chunks=$(find . -name "*.part*" -type f 2>/dev/null | wc -l)
+          if [ $remaining_chunks -gt 0 ]; then
+            echo ""
+            echo "⚠️ WARNING: $remaining_chunks chunk files still remain:"
+            find . -name "*.part*" -type f
+          else
+            echo "✅ No orphaned chunk files remaining"
+          fi
+          
+          echo ""
+          if [ $unity_files_found -ge 4 ]; then
+            echo "✅ Unity WebGL structure appears COMPLETE"
+          elif [ $unity_files_found -ge 2 ]; then
+            echo "⚠️ Unity WebGL structure may be INCOMPLETE"
+          else
+            echo "❌ Unity WebGL structure appears BROKEN"
+            exit 1
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5.0.0
+        
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
+        with:
+          path: '.'
+
+  # Separate deploy job for GitHub Pages
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
+        
+      - name: Final status report
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📋 GitHub Pages Deployment Complete"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "🌐 Site URL: ${{ steps.deployment.outputs.page_url }}"
+          echo "📦 Deployment ID: ${{ steps.deployment.outputs.deployment_id }}"
+          echo ""
+          echo "🎮 Unity WebGL build is now live!"
+          echo ""
+          echo "🔗 Professional URL:"
+          echo "   https://$(echo ${{ github.repository }} | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]').unreality3d.com/$(echo ${{ github.repository }} | cut -d'/' -f2)/"
+          echo ""
+          echo "✅ Deployment completed successfully"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
