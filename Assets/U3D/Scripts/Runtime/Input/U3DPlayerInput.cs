@@ -99,7 +99,6 @@ namespace U3D.Input
             }
 
             Instance = this;
-            DontDestroyOnLoad(gameObject);
 
             SetupInputActions();
 
