@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c315fdc3929140449a49befaf7aa87f0, type: 3}
   m_Name: U3DObjectIdRegistry
   m_EditorClassIdentifier: U3D.Net::U3D.Net.U3DObjectIdRegistry
-  _nextAuthoredId: 71
+  _nextAuthoredId: 72
   _prefabTable:
   - {fileID: 0}
   - {fileID: 1562623449345102100, guid: a4c4a127a435edd479478928dab71c01, type: 3}
