@@ -12,8 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c72e5e4cbf75c2a41acad769ed3047ac, type: 3}
   m_Name: U3DRoomIdentityData
   m_EditorClassIdentifier: U3D.Runtime::U3D.Networking.U3DRoomIdentityData
-  creator: spacedolphin
-  product: u3d-gym
-  entries:
-  - ScenePath: Assets/U3D/U3D_Demo/U3DDemoScene.unity
-    Guid: 71f7a246943425141a417dfea3398c0c
+  creator: 
+  product: 
+  entries: []
