@@ -8,7 +8,8 @@
 # - Version tracking for Creator Dashboard comparison
 #
 # Triggers:
-# - Manual dispatch only: always generates update package
+# - Push to main that changes Assets/U3D or Assets/Settings (what the package ships)
+# - Manual dispatch: always generates an update package
 #
 # Third-party actions are pinned to commit SHAs. Trailing comment shows the version.
 # The job-level repository_owner condition is required. Do not remove either, and
@@ -17,6 +18,12 @@
 name: U3D Template Update Automation
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'Assets/U3D/**'
+      - 'Assets/Settings/**'
+      - '!Assets/U3D/Resources/version.txt'
   workflow_dispatch:
     inputs:
       version_tag:
@@ -32,6 +39,10 @@ permissions:
   contents: write
   pages: write
 
+concurrency:
+  group: u3d-update-release
+  cancel-in-progress: false
+
 jobs:
   update-version-and-build:
     name: Generate Update Package
@@ -46,11 +57,10 @@ jobs:
       - name: Checkout u3d-template repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
+          ref: main
           fetch-depth: 0
           lfs: true
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      # No change detection gate: manual dispatch always runs.
 
       - name: Generate version and update version file
         id: version
