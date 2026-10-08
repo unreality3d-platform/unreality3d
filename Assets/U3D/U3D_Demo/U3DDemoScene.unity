@@ -14552,7 +14552,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8cb9240298aee804981ac3471ea981c5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: U3D.Runtime::U3D.U3DOpenURL
-  url: https://www.adjectivebeaver.com/
+  url: https://www.instagram.com/adjectivebeaver/
   OnURLOpened:
     m_PersistentCalls:
       m_Calls: []

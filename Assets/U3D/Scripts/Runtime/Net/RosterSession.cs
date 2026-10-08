@@ -37,8 +37,8 @@ namespace U3D.Net
         [SerializeField] private string relayEndpoint = "https://us-central1-unreality3d.cloudfunctions.net/createRelayCredential";
 
         [Header("Connections")]
-        [Tooltip("Seconds between re-sends of an unanswered connection offer. A placeholder until a real round trip is observed.")]
-        [SerializeField] private float offerResendInterval = 3f;
+        [Tooltip("Seconds between re-sends of an unanswered connection offer. Keep this above 4, the time a connection is given to gather its addresses, or a re-send can replace a connection the other player is already answering.")]
+        [SerializeField] private float offerResendInterval = 6f;
 
         [Tooltip("How many times an unanswered offer is re-sent before the connection to that player is given up on.")]
         [SerializeField] private int offerAttempts = 5;
