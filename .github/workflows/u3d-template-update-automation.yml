@@ -220,7 +220,7 @@ jobs:
              - Your materials, textures, models
              - Your custom scripts
              - Any files you've modified
-          7. **Keep checked** all U3D core files (Assets/U3D/, Assets/U3D_SDK/)
+          7. **Keep checked** all U3D core files (Assets/U3D/)
           8. Click **Import**
           9. **Verify** your template version updated in Creator Dashboard
 
@@ -256,3 +256,19 @@ jobs:
             echo "## What's New in This Update" >> release_notes.md
             echo "" >> release_notes.md
             echo "$CHANGELOG" >> release_notes.md
+          fi
+
+          echo "notes<<DELIMITER" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "DELIMITER" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+        with:
+          tag_name: ${{ needs.update-version-and-build.outputs.version_tag }}
+          name: "${{ needs.update-version-and-build.outputs.version_tag }}"
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: |
+            release-assets/*.unitypackage
+          draft: false
+          prerelease: false

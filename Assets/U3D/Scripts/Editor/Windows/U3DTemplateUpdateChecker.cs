@@ -258,7 +258,7 @@ namespace U3D.Editor
                     "Import U3D Template Update",
                     $"Update package downloaded ({fileSize / 1024}KB).\n\n" +
                     "The import dialog will open next. Please review carefully:\n" +
-                    "• KEEP checked: all U3D core files (Assets/U3D/, Assets/U3D_SDK/)\n" +
+                    "• KEEP checked: all U3D core files (Assets/U3D/)\n" +
                     "• UNCHECK: your custom scenes, materials, textures, models, and scripts\n\n" +
                     "It's recommended to back up your project folder first.",
                     "Open Import Dialog",
