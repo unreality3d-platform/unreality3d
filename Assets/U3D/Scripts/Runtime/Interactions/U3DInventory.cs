@@ -292,7 +292,7 @@ namespace U3D
         /// Press-the-hotkey entry point. Three paths:
         ///   1. Slot has items → spawn the next one and activate it. (Grabbable's
         ///      currentlyGrabbed auto-release handles "fire the previous one"
-        ///      mid-stack via Throwable's release-as-throw listener.)
+        ///      mid-stack; with Throwable on, that release is a throw.)
         ///   2. Slot empty but the last spawned item is still held → release it
         ///      so the same hotkey closes the stack with the last item firing.
         ///   3. Slot empty and nothing relevant held → no-op.
@@ -339,9 +339,9 @@ namespace U3D
 
             // Spawn at the hand bone position. Inventory has no opinion on item
             // rotation — we use identity so the prefab's authored orientation isn't
-            // overridden by the hand bone's animation-rig rotation. Throwable derives
-            // throw direction from the camera at release time, so spawn rotation
-            // doesn't affect throw behavior.
+            // overridden by the hand bone's animation-rig rotation. A Grabbable with
+            // Throwable on derives throw direction from the camera at release time,
+            // so spawn rotation doesn't affect throw behavior.
             Vector3 spawnPos = handTransform != null ? handTransform.position : playerTransform.position;
             Quaternion spawnRot = Quaternion.identity;
 
@@ -433,9 +433,9 @@ namespace U3D
         /// release it. Used when the slot is empty but the held item logically
         /// "belongs" to this slot, so the same hotkey can fire it.
         ///
-        /// Whatever happens after release (throw via Throwable, drop under gravity,
-        /// float in place if kinematic) is determined by the prefab's components
-        /// and authored physics state — Inventory doesn't impose any release behavior.
+        /// Whatever happens after release (a throw with Throwable on, a fall with
+        /// Drop On Release on, otherwise staying where it was let go) is determined
+        /// by the prefab's Grabbable settings — Inventory doesn't impose any release behavior.
         /// </summary>
         private void ReleaseHeldFromSlot(int slotIndex)
         {
