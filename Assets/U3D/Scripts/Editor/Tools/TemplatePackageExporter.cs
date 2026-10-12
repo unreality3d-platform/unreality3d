@@ -19,9 +19,6 @@ namespace U3D.Editor.Tools
         // anything outside it, including .github/workflows.
         private static readonly string[] CORE_UPDATE_PATHS = {
             "Assets/U3D",                              // Core U3D SDK and tools
-            "Assets/U3D_SDK",                          // Publishing and monetization systems  
-            "Assets/Plugins/U3D",                      // U3D-specific plugins
-            "Assets/StreamingAssets/U3D",              // U3D streaming assets
             "Assets/Settings",                         // URP/renderer/quality/post-process assets
         };
 
