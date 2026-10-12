@@ -54,7 +54,7 @@ jobs:
       version_timestamp: ${{ steps.version.outputs.timestamp }}
       
     steps:
-      - name: Checkout u3d-template repository
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: main
@@ -215,12 +215,8 @@ jobs:
           3. In Unity: `Assets > Import Package > Custom Package`
           4. **Select** the downloaded `.unitypackage` file
           5. **CRITICAL**: Review the import dialog carefully
-          6. **Uncheck** any files you've customized:
-             - Your scenes (Assets/Scenes/)
-             - Your materials, textures, models
-             - Your custom scripts
-             - Any files you've modified
-          7. **Keep checked** all U3D core files (Assets/U3D/)
+          6. **Uncheck** anything you've edited in `Assets/U3D` or `Assets/Settings`, including the demo scene in `Assets/U3D/U3D_Demo`. Checked files are overwritten.
+          7. **Keep checked** everything else. The package contains only `Assets/U3D` and `Assets/Settings`; nothing outside those folders is touched.
           8. Click **Import**
           9. **Verify** your template version updated in Creator Dashboard
 
@@ -231,13 +227,13 @@ jobs:
           2. In the Inspector, remove any missing or outdated U3D components
           3. Re-apply the feature from the Creator Dashboard (toolbar → U3D)
 
-          **Tip**: To get the latest demo scene, delete `Assets/U3D/U3D_Demo` before importing the update.
+          **Tip**: If you edited the demo scene and want to keep it, save a copy outside `Assets/U3D` before importing.
 
           ## Important Notes
 
           - **Always backup** your entire project folder before updating
           - **Check your current version** in Creator Dashboard first
-          - **Uncheck your custom files** during import to preserve your work
+          - **Uncheck anything you edited** in `Assets/U3D` or `Assets/Settings` to preserve your work
           - **Test thoroughly** after each update
 
           ## Need Help?

@@ -256,12 +256,10 @@ namespace U3D.Editor
 
                 bool proceed = EditorUtility.DisplayDialog(
                     "Import U3D Template Update",
-                    $"Update package downloaded ({fileSize / 1024}KB).\n\n" +
-                    "The import dialog will open next. Please review carefully:\n" +
-                    "• KEEP checked: all U3D core files (Assets/U3D/)\n" +
-                    "• UNCHECK: your custom scenes, materials, textures, models, and scripts\n\n" +
-                    "It's recommended to back up your project folder first.",
-                    "Open Import Dialog",
+                    $"Update downloaded ({fileSize / 1024}KB). The import window opens next.\n" +
+                    "It replaces files in Assets/U3D and Assets/Settings only.\n\n" +
+                    "Anything you edited in Assets/U3D and Assets/Settings, including the demo scene in Assets/U3D/U3D_Demo, is overwritten unless you uncheck it.",
+                    "Open Import Window",
                     "Cancel");
 
                 if (!proceed)
