@@ -5,6 +5,7 @@ using U3D.Networking;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace U3D.Editor
 {
@@ -12,8 +13,9 @@ namespace U3D.Editor
     /// Runs before a publish builds anything. Verifies the project can produce a
     /// build whose objects will take part in the session, corrects the authored-ID
     /// counter against every scene in the project, refuses the publish when a scene
-    /// in the build carries an ID that would fail silently at runtime, and writes
-    /// the room identity the build composes its room name from.
+    /// in the build carries an ID that would fail silently at runtime or would start
+    /// a session with nowhere for players to appear, and writes the room identity
+    /// the build composes its room name from.
     /// </summary>
     public static class NetPublishWalk
     {
@@ -53,6 +55,14 @@ namespace U3D.Editor
             if (problems.Count > 0)
             {
                 Report("Publish stopped", BuildRefusal(problems), BuildSummary(problems));
+                return false;
+            }
+
+            var spawnProblems = CollectMissingPlayerSpawns(selectedScenePaths);
+
+            if (spawnProblems.Count > 0)
+            {
+                Report("Publish stopped", BuildSpawnRefusal(spawnProblems), BuildSpawnSummary(spawnProblems));
                 return false;
             }
 
@@ -373,6 +383,123 @@ namespace U3D.Editor
         }
 
         /// <summary>
+        /// Refuses a scene that would start a session and spawn nobody. Applies only to a
+        /// selected scene carrying an active, enabled network bootstrap, because a scene
+        /// loaded additively runs on the entry scene's CORE and needs no spawn point of its
+        /// own. Mirrors the runtime: U3DNetworkBootstrap.SpawnLocalPlayer needs the spawner,
+        /// whose Awake runs only on an active GameObject, and U3DPlayerSpawner counts active
+        /// GameObjects tagged PlayerSpawnPoint. Loads scenes the way NetPrefabSweep does,
+        /// because a tag or active state overridden on a CORE instance is invisible to a
+        /// text read of the scene file.
+        /// </summary>
+        private static List<string> CollectMissingPlayerSpawns(string[] selectedScenePaths)
+        {
+            var problems = new List<string>();
+
+            if (selectedScenePaths == null) return problems;
+
+            var openedHere = new List<Scene>();
+
+            try
+            {
+                foreach (var path in selectedScenePaths)
+                {
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    Scene scene = SceneManager.GetSceneByPath(path);
+                    bool alreadyOpen = scene.IsValid() && scene.isLoaded;
+
+                    if (!alreadyOpen)
+                    {
+                        try
+                        {
+                            scene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
+                        }
+                        catch (System.Exception e)
+                        {
+                            problems.Add(path + " could not be opened to check where players appear. " + e.Message);
+                            continue;
+                        }
+
+                        if (!scene.IsValid() || !scene.isLoaded)
+                        {
+                            problems.Add(path + " could not be opened to check where players appear.");
+                            continue;
+                        }
+
+                        openedHere.Add(scene);
+                    }
+
+                    CheckPlayerSpawn(scene, path, problems);
+                }
+            }
+            finally
+            {
+                foreach (Scene scene in openedHere)
+                {
+                    if (scene.IsValid() && scene.isLoaded)
+                    {
+                        EditorSceneManager.CloseScene(scene, true);
+                    }
+                }
+            }
+
+            return problems;
+        }
+
+        private static void CheckPlayerSpawn(Scene scene, string path, List<string> problems)
+        {
+            const string spawnTag = "PlayerSpawnPoint";
+
+            bool startsSession = false;
+            bool hasSpawner = false;
+            int spawnPoints = 0;
+
+            var roots = new List<GameObject>();
+            scene.GetRootGameObjects(roots);
+
+            foreach (GameObject root in roots)
+            {
+                foreach (var bootstrap in root.GetComponentsInChildren<U3DNetworkBootstrap>(true))
+                {
+                    if (bootstrap.enabled && bootstrap.gameObject.activeInHierarchy) startsSession = true;
+                }
+
+                foreach (var spawner in root.GetComponentsInChildren<U3DPlayerSpawner>(true))
+                {
+                    if (spawner.gameObject.activeInHierarchy) hasSpawner = true;
+                }
+
+                foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                {
+                    GameObject candidate = t.gameObject;
+                    if (!candidate.activeInHierarchy) continue;
+                    if (!string.Equals(candidate.tag, spawnTag, System.StringComparison.Ordinal)) continue;
+                    spawnPoints++;
+                }
+            }
+
+            if (!startsSession) return;
+
+            if (!hasSpawner)
+            {
+                problems.Add(path + ": the U3D Player Spawner is missing or switched off. It sits on the " +
+                             "U3D_PlayerSpawnPoint object inside U3D CORE - DO NOT DELETE. Switch that object " +
+                             "back on, or select U3D CORE - DO NOT DELETE in the Hierarchy, open Overrides in " +
+                             "the Inspector, and revert the change to U3D_PlayerSpawnPoint.");
+                return;
+            }
+
+            if (spawnPoints == 0)
+            {
+                problems.Add(path + ": nothing switched on in this scene has the tag PlayerSpawnPoint. Select " +
+                             "the object players should appear at and set its Tag to PlayerSpawnPoint in the " +
+                             "Inspector. U3D CORE's U3D_PlayerSpawnPoint object carries that tag unless it " +
+                             "was changed.");
+            }
+        }
+
+        /// <summary>
         /// Writes the room identity whole, so the names and the scene entries always come
         /// from the same publish. Runs after registration and has nothing left to refuse.
         /// </summary>
@@ -441,6 +568,42 @@ namespace U3D.Editor
             summary.AppendLine("The full list has been copied to your clipboard. Paste it somewhere you can");
             summary.AppendLine("read it — a text file, or a chat window — then fix the objects it names and");
             summary.AppendLine("publish again.");
+
+            return summary.ToString();
+        }
+
+        private static string BuildSpawnRefusal(List<string> problems)
+        {
+            var message = new StringBuilder();
+
+            message.AppendLine("Players would have nowhere to appear in this build, so the experience would be empty.");
+            message.AppendLine();
+            message.AppendLine("Each scene below starts the experience, and needs a place for players to spawn:");
+            message.AppendLine();
+
+            foreach (var problem in problems)
+            {
+                message.Append("  ").AppendLine(problem);
+            }
+
+            message.AppendLine();
+            message.AppendLine("Save each scene after fixing it, then publish again.");
+
+            return message.ToString();
+        }
+
+        private static string BuildSpawnSummary(List<string> problems)
+        {
+            var summary = new StringBuilder();
+
+            summary.AppendLine("Players would have nowhere to appear in this build, so the experience would be empty.");
+            summary.AppendLine();
+            summary.AppendLine(problems.Count == 1
+                ? "There is 1 scene to fix."
+                : "There are " + problems.Count + " scenes to fix.");
+            summary.AppendLine();
+            summary.AppendLine("The full list, with how to fix each scene, has been copied to your clipboard.");
+            summary.AppendLine("Paste it somewhere you can read it, fix the scenes it names, and publish again.");
 
             return summary.ToString();
         }
