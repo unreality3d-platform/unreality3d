@@ -921,8 +921,7 @@ namespace U3D.Editor
         {
             var message = new StringBuilder();
 
-            message.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run");
-            message.AppendLine("for visitors. Every experience needs one unchanged copy of it.");
+            message.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run for visitors. Every experience needs one unchanged copy of it.");
             message.AppendLine();
 
             foreach (var problem in problems)
@@ -940,8 +939,7 @@ namespace U3D.Editor
         {
             var summary = new StringBuilder();
 
-            summary.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run");
-            summary.AppendLine("for visitors.");
+            summary.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run for visitors.");
             summary.AppendLine();
             summary.AppendLine(problems.Count == 1
                 ? "There is 1 problem to fix."
