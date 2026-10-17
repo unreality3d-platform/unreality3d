@@ -13,9 +13,9 @@ namespace U3D.Editor
     /// Runs before a publish builds anything. Verifies the project can produce a
     /// build whose objects will take part in the session, corrects the authored-ID
     /// counter against every scene in the project, refuses the publish when a scene
-    /// in the build carries an ID that would fail silently at runtime or would start
-    /// a session with nowhere for players to appear, and writes the room identity
-    /// the build composes its room name from.
+    /// in the build is unsaved, carries an ID that would fail silently at runtime, or
+    /// holds a U3D CORE that is missing or no longer the prefab as shipped, and writes
+    /// the room identity the build composes its room name from.
     /// </summary>
     public static class NetPublishWalk
     {
@@ -25,6 +25,15 @@ namespace U3D.Editor
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
             {
+                return false;
+            }
+
+            var unsaved = CollectUnsavedSelected(selectedScenePaths);
+
+            if (unsaved.Count > 0)
+            {
+                var unsavedMessage = BuildUnsavedRefusal(unsaved);
+                Report("Publish stopped", unsavedMessage, unsavedMessage);
                 return false;
             }
 
@@ -58,11 +67,11 @@ namespace U3D.Editor
                 return false;
             }
 
-            var spawnProblems = CollectMissingPlayerSpawns(selectedScenePaths);
+            var coreProblems = CollectCoreProblems(selectedScenePaths);
 
-            if (spawnProblems.Count > 0)
+            if (coreProblems.Count > 0)
             {
-                Report("Publish stopped", BuildSpawnRefusal(spawnProblems), BuildSpawnSummary(spawnProblems));
+                Report("Publish stopped", BuildCoreRefusal(coreProblems), BuildCoreSummary(coreProblems));
                 return false;
             }
 
@@ -383,22 +392,46 @@ namespace U3D.Editor
         }
 
         /// <summary>
-        /// Refuses a scene that would start a session and spawn nobody. Applies only to a
-        /// selected scene carrying an active, enabled network bootstrap, because a scene
-        /// loaded additively runs on the entry scene's CORE and needs no spawn point of its
-        /// own. Mirrors the runtime: U3DNetworkBootstrap.SpawnLocalPlayer needs the spawner,
-        /// whose Awake runs only on an active GameObject, and U3DPlayerSpawner counts active
-        /// GameObjects tagged PlayerSpawnPoint. Loads scenes the way NetPrefabSweep does,
-        /// because a tag or active state overridden on a CORE instance is invisible to a
-        /// text read of the scene file.
+        /// A selected scene that is open with unsaved changes after the save prompt. The
+        /// ID checks and the build read the file on disk, while the CORE check and
+        /// registration read the open scene, so a declined save would let them disagree.
         /// </summary>
-        private static List<string> CollectMissingPlayerSpawns(string[] selectedScenePaths)
+        private static List<string> CollectUnsavedSelected(string[] selectedScenePaths)
+        {
+            var unsaved = new List<string>();
+
+            if (selectedScenePaths == null) return unsaved;
+
+            foreach (var path in selectedScenePaths)
+            {
+                if (string.IsNullOrEmpty(path)) continue;
+
+                Scene scene = SceneManager.GetSceneByPath(path);
+                if (scene.IsValid() && scene.isLoaded && scene.isDirty) unsaved.Add(path);
+            }
+
+            return unsaved;
+        }
+
+        /// <summary>
+        /// Refuses a build unless at least one selected scene holds U3D CORE, and every
+        /// selected scene that holds one holds a single, linked, intact instance of the
+        /// template's prefab. Intact is judged against the prefab asset itself rather than
+        /// a list kept here, so a part added to CORE in a later release is covered without
+        /// an edit to this file. A selected scene with no CORE passes when another one has
+        /// it, because a scene loaded additively runs on the entry scene's CORE (§8.9).
+        /// Loads scenes the way NetPrefabSweep does, because an override on a CORE instance
+        /// is invisible to a text read of the scene file.
+        /// </summary>
+        private static List<string> CollectCoreProblems(string[] selectedScenePaths)
         {
             var problems = new List<string>();
 
-            if (selectedScenePaths == null) return problems;
+            if (selectedScenePaths == null || selectedScenePaths.Length == 0) return problems;
 
             var openedHere = new List<Scene>();
+            var checkedAssets = new Dictionary<GameObject, bool>();
+            int scenesWithCore = 0;
 
             try
             {
@@ -417,20 +450,20 @@ namespace U3D.Editor
                         }
                         catch (System.Exception e)
                         {
-                            problems.Add(path + " could not be opened to check where players appear. " + e.Message);
+                            problems.Add(path + " could not be opened to check U3D CORE. " + e.Message);
                             continue;
                         }
 
                         if (!scene.IsValid() || !scene.isLoaded)
                         {
-                            problems.Add(path + " could not be opened to check where players appear.");
+                            problems.Add(path + " could not be opened to check U3D CORE.");
                             continue;
                         }
 
                         openedHere.Add(scene);
                     }
 
-                    CheckPlayerSpawn(scene, path, problems);
+                    if (CheckCore(scene, path, checkedAssets, problems)) scenesWithCore++;
                 }
             }
             finally
@@ -444,59 +477,353 @@ namespace U3D.Editor
                 }
             }
 
+            if (scenesWithCore == 0 && problems.Count == 0)
+            {
+                problems.Add("None of the scenes selected for this build holds U3D CORE - DO NOT DELETE, so " +
+                             "nobody would be connected to the room or given a player. Open your starting " +
+                             "scene, add it from the Creator Dashboard (Project Tools, Game Systems, Add U3D " +
+                             "Core Prefab), and save the scene.");
+            }
+
             return problems;
         }
 
-        private static void CheckPlayerSpawn(Scene scene, string path, List<string> problems)
+        /// <summary>
+        /// Checks one scene and returns whether it holds a CORE at all. The CORE is found
+        /// from its network bootstrap and traced to the prefab asset that bootstrap came
+        /// from, so a CORE nested inside a creator's own prefab is still found.
+        /// </summary>
+        private static bool CheckCore(
+            Scene scene,
+            string path,
+            Dictionary<GameObject, bool> checkedAssets,
+            List<string> problems)
         {
-            const string spawnTag = "PlayerSpawnPoint";
-
-            bool startsSession = false;
-            bool hasSpawner = false;
-            int spawnPoints = 0;
-
+            var bootstraps = new List<U3DNetworkBootstrap>();
             var roots = new List<GameObject>();
             scene.GetRootGameObjects(roots);
 
             foreach (GameObject root in roots)
             {
-                foreach (var bootstrap in root.GetComponentsInChildren<U3DNetworkBootstrap>(true))
-                {
-                    if (bootstrap.enabled && bootstrap.gameObject.activeInHierarchy) startsSession = true;
-                }
-
-                foreach (var spawner in root.GetComponentsInChildren<U3DPlayerSpawner>(true))
-                {
-                    if (spawner.gameObject.activeInHierarchy) hasSpawner = true;
-                }
-
-                foreach (var t in root.GetComponentsInChildren<Transform>(true))
-                {
-                    GameObject candidate = t.gameObject;
-                    if (!candidate.activeInHierarchy) continue;
-                    if (!string.Equals(candidate.tag, spawnTag, System.StringComparison.Ordinal)) continue;
-                    spawnPoints++;
-                }
+                bootstraps.AddRange(root.GetComponentsInChildren<U3DNetworkBootstrap>(true));
             }
 
-            if (!startsSession) return;
+            if (bootstraps.Count == 0) return false;
 
-            if (!hasSpawner)
+            if (bootstraps.Count > 1)
             {
-                problems.Add(path + ": the U3D Player Spawner is missing or switched off. It sits on the " +
-                             "U3D_PlayerSpawnPoint object inside U3D CORE - DO NOT DELETE. Switch that object " +
-                             "back on, or select U3D CORE - DO NOT DELETE in the Hierarchy, open Overrides in " +
-                             "the Inspector, and revert the change to U3D_PlayerSpawnPoint.");
-                return;
+                problems.Add(path + ": this scene holds " + bootstraps.Count + " copies of U3D CORE - DO NOT " +
+                             "DELETE. Each would connect its own session and spawn its own player. Delete all " +
+                             "but one and save the scene.");
+                return true;
             }
 
-            if (spawnPoints == 0)
+            U3DNetworkBootstrap bootstrap = bootstraps[0];
+            var sourceBootstrap = PrefabUtility.GetCorrespondingObjectFromOriginalSource(bootstrap);
+            GameObject assetRoot = sourceBootstrap != null ? sourceBootstrap.transform.root.gameObject : null;
+            GameObject instanceRoot = assetRoot != null ? FindInstanceRoot(bootstrap.transform, assetRoot) : null;
+
+            if (instanceRoot == null)
             {
-                problems.Add(path + ": nothing switched on in this scene has the tag PlayerSpawnPoint. Select " +
-                             "the object players should appear at and set its Tag to PlayerSpawnPoint in the " +
-                             "Inspector. U3D CORE's U3D_PlayerSpawnPoint object carries that tag unless it " +
-                             "was changed.");
+                problems.Add(path + ": U3D CORE - DO NOT DELETE is no longer linked to the template's prefab, " +
+                             "because it was unpacked or rebuilt by hand, so it cannot be checked or updated. " +
+                             "Delete it from the Hierarchy, add it again from the Creator Dashboard (Project " +
+                             "Tools, Game Systems, Add U3D Core Prefab), move its spawn point back where you " +
+                             "want it, and save the scene.");
+                return true;
             }
+
+            var assetPath = AssetDatabase.GetAssetPath(assetRoot);
+
+            if (!assetPath.StartsWith("Assets/U3D/", System.StringComparison.Ordinal))
+            {
+                problems.Add(path + ": the CORE in this scene comes from " + assetPath + ", a copy of the " +
+                             "template's prefab. Template updates never reach a copy. Delete it from the " +
+                             "Hierarchy, add the template's own from the Creator Dashboard (Project Tools, Game " +
+                             "Systems, Add U3D Core Prefab), and save the scene.");
+                return true;
+            }
+
+            if (!checkedAssets.TryGetValue(assetRoot, out bool assetIntact))
+            {
+                assetIntact = CheckCoreAsset(assetRoot, assetPath, problems);
+                checkedAssets[assetRoot] = assetIntact;
+            }
+
+            if (!assetIntact) return true;
+
+            CheckCoreInstance(instanceRoot, assetRoot, path, problems);
+            return true;
+        }
+
+        private static GameObject FindInstanceRoot(Transform from, GameObject assetRoot)
+        {
+            for (Transform t = from; t != null; t = t.parent)
+            {
+                if (PrefabUtility.GetCorrespondingObjectFromOriginalSource(t.gameObject) == assetRoot)
+                {
+                    return t.gameObject;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The prefab asset must itself carry what the runtime needs, because every
+        /// instance check below measures against it.
+        /// </summary>
+        private static bool CheckCoreAsset(GameObject assetRoot, string assetPath, List<string> problems)
+        {
+            var missing = new List<string>();
+            Transform top = assetRoot.transform;
+
+            if (!HasRunning<U3DNetworkBootstrap>(assetRoot)) missing.Add("the network bootstrap");
+            if (!HasRunning<RosterSession>(assetRoot)) missing.Add("the multiplayer session");
+            if (!HasRunning<U3DPlayerSpawner>(assetRoot)) missing.Add("the player spawner");
+
+            bool hasSpawnPoint = false;
+            foreach (var t in assetRoot.GetComponentsInChildren<Transform>(true))
+            {
+                if (IsActiveWithin(t, top) &&
+                    string.Equals(t.gameObject.tag, SpawnTag, System.StringComparison.Ordinal))
+                {
+                    hasSpawnPoint = true;
+                    break;
+                }
+            }
+            if (!hasSpawnPoint) missing.Add("a player spawn point");
+
+            foreach (var bootstrap in assetRoot.GetComponentsInChildren<U3DNetworkBootstrap>(true))
+            {
+                var serialized = new SerializedObject(bootstrap);
+                foreach (var field in LockedBootstrapFields)
+                {
+                    var prefab = serialized.FindProperty(field + ".prefab");
+                    if (prefab == null || prefab.objectReferenceValue == null)
+                    {
+                        missing.Add("its " + ObjectNames.NicifyVariableName(field));
+                    }
+                }
+            }
+
+            if (missing.Count == 0) return true;
+
+            problems.Add("The U3D CORE - DO NOT DELETE prefab at " + assetPath + " has been changed and is " +
+                         "missing " + string.Join(", ", missing) + ". Restore it from the latest U3D update: " +
+                         "install it from the Creator Dashboard if one is offered, or download the newest " +
+                         ".unitypackage from https://github.com/unreality3d-platform/unreality3d/releases and " +
+                         "import it with Assets/U3D checked.");
+            return false;
+        }
+
+        /// <summary>
+        /// Every object and component the prefab asset carries must still be in the
+        /// instance, switched on wherever the asset has it on, and every object keeps its
+        /// tag. The session's settings and the two player prefabs must match the asset.
+        /// Anything else the creator changes is theirs: transforms, spawn behaviour, the
+        /// loading camera, and the cursor manager, which the docs call optional.
+        /// </summary>
+        private static void CheckCoreInstance(GameObject instanceRoot, GameObject assetRoot, string path, List<string> problems)
+        {
+            var issues = new List<string>();
+            Transform assetTop = assetRoot.transform;
+            var presentObjects = new HashSet<GameObject>();
+            var presentComponents = new HashSet<Component>();
+
+            if (instanceRoot.activeSelf && !instanceRoot.activeInHierarchy)
+            {
+                issues.Add("an object it sits inside is switched off");
+            }
+
+            foreach (var t in instanceRoot.GetComponentsInChildren<Transform>(true))
+            {
+                var source = PrefabUtility.GetCorrespondingObjectFromOriginalSource(t.gameObject);
+                if (source == null || source.transform.root != assetTop) continue;
+
+                presentObjects.Add(source);
+
+                if (!IsOptional(source))
+                {
+                    if (source.activeSelf && !t.gameObject.activeSelf)
+                    {
+                        issues.Add("\"" + t.gameObject.name + "\" is switched off");
+                    }
+
+                    if (!string.Equals(source.tag, t.gameObject.tag, System.StringComparison.Ordinal))
+                    {
+                        issues.Add("\"" + t.gameObject.name + "\" has its tag changed from " + source.tag +
+                                   " to " + t.gameObject.tag);
+                    }
+                }
+
+                foreach (var component in t.GetComponents<Component>())
+                {
+                    if (component == null) continue;
+
+                    var sourceComponent = PrefabUtility.GetCorrespondingObjectFromOriginalSource(component);
+                    if (sourceComponent == null || sourceComponent.transform.root != assetTop) continue;
+
+                    presentComponents.Add(sourceComponent);
+
+                    if (component is U3DWebGLCursorManager) continue;
+
+                    if (component is Behaviour behaviour && sourceComponent is Behaviour sourceBehaviour &&
+                        sourceBehaviour.enabled && !behaviour.enabled)
+                    {
+                        issues.Add("the " + ComponentName(component) + " on \"" + t.gameObject.name +
+                                   "\" is switched off");
+                    }
+
+                    if (component is RosterSession)
+                    {
+                        CompareLocked(component, sourceComponent, null, t.gameObject.name, issues);
+                    }
+                    else if (component is U3DNetworkBootstrap)
+                    {
+                        CompareLocked(component, sourceComponent, LockedBootstrapFields, t.gameObject.name, issues);
+                    }
+                }
+            }
+
+            foreach (var t in assetRoot.GetComponentsInChildren<Transform>(true))
+            {
+                if (IsOptional(t.gameObject)) continue;
+
+                if (!presentObjects.Contains(t.gameObject))
+                {
+                    if (t.parent == null || presentObjects.Contains(t.parent.gameObject))
+                    {
+                        issues.Add("\"" + t.gameObject.name + "\" was removed");
+                    }
+                    continue;
+                }
+
+                foreach (var component in t.GetComponents<Component>())
+                {
+                    if (component == null || component is Transform) continue;
+                    if (component is U3DWebGLCursorManager) continue;
+
+                    if (!presentComponents.Contains(component))
+                    {
+                        issues.Add("the " + ComponentName(component) + " on \"" + t.gameObject.name +
+                                   "\" was removed");
+                    }
+                }
+            }
+
+            if (issues.Count == 0) return;
+
+            var detail = new StringBuilder();
+            detail.Append(path).Append(": U3D CORE - DO NOT DELETE has been changed in ways the experience ")
+                  .Append("cannot run with:");
+
+            foreach (var issue in issues)
+            {
+                detail.AppendLine();
+                detail.Append("    ").Append(issue);
+            }
+
+            detail.AppendLine();
+            detail.Append("    To fix: select U3D CORE - DO NOT DELETE in the Hierarchy, open Overrides at the top ")
+                  .Append("of the Inspector, and revert each change listed above. Revert All also undoes changes ")
+                  .Append("you meant to keep, such as a moved spawn point. Then save the scene.");
+
+            problems.Add(detail.ToString());
+        }
+
+        private static readonly string[] LockedBootstrapFields = { "localPlayerPrefab", "remoteAvatarPrefab" };
+
+        private const string SpawnTag = "PlayerSpawnPoint";
+
+        private static void CompareLocked(
+            Component instance,
+            Component source,
+            string[] only,
+            string objectName,
+            List<string> issues)
+        {
+            var sourceSerialized = new SerializedObject(source);
+            var instanceSerialized = new SerializedObject(instance);
+            var changed = new List<string>();
+
+            if (only != null)
+            {
+                foreach (var field in only)
+                {
+                    var a = sourceSerialized.FindProperty(field);
+                    var b = instanceSerialized.FindProperty(field);
+                    if (a == null || b == null) continue;
+                    if (!SerializedProperty.DataEquals(a, b)) changed.Add(a.displayName);
+                }
+            }
+            else
+            {
+                var iterator = sourceSerialized.GetIterator();
+                bool enterChildren = true;
+
+                while (iterator.NextVisible(enterChildren))
+                {
+                    enterChildren = false;
+                    if (iterator.propertyPath == "m_Script") continue;
+
+                    var b = instanceSerialized.FindProperty(iterator.propertyPath);
+                    if (b == null || !SerializedProperty.DataEquals(iterator, b)) changed.Add(iterator.displayName);
+                }
+            }
+
+            if (changed.Count == 0) return;
+
+            issues.Add("the " + ComponentName(instance) + " on \"" + objectName + "\" has settings changed that " +
+                       "must stay as shipped: " + string.Join(", ", changed));
+        }
+
+        private static bool HasRunning<T>(GameObject assetRoot) where T : Behaviour
+        {
+            foreach (var component in assetRoot.GetComponentsInChildren<T>(true))
+            {
+                if (component.enabled && IsActiveWithin(component.transform, assetRoot.transform)) return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsActiveWithin(Transform t, Transform top)
+        {
+            for (Transform current = t; current != null; current = current.parent)
+            {
+                if (!current.gameObject.activeSelf) return false;
+                if (current == top) break;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The cursor manager's object holds nothing else, and the docs call it optional,
+        /// so removing or switching off that object is the creator's choice.
+        /// </summary>
+        private static bool IsOptional(GameObject source)
+        {
+            bool hasCursorManager = false;
+
+            foreach (var component in source.GetComponentsInChildren<Component>(true))
+            {
+                if (component == null || component is Transform) continue;
+                if (component is U3DWebGLCursorManager)
+                {
+                    hasCursorManager = true;
+                    continue;
+                }
+                return false;
+            }
+
+            return hasCursorManager;
+        }
+
+        private static string ComponentName(Component component)
+        {
+            return ObjectNames.NicifyVariableName(component.GetType().Name);
         }
 
         /// <summary>
@@ -572,38 +899,56 @@ namespace U3D.Editor
             return summary.ToString();
         }
 
-        private static string BuildSpawnRefusal(List<string> problems)
+        private static string BuildUnsavedRefusal(List<string> unsaved)
         {
             var message = new StringBuilder();
 
-            message.AppendLine("Players would have nowhere to appear in this build, so the experience would be empty.");
+            message.AppendLine("These scenes have unsaved changes, and a publish ships only what is saved:");
             message.AppendLine();
-            message.AppendLine("Each scene below starts the experience, and needs a place for players to spawn:");
+
+            foreach (var path in unsaved)
+            {
+                message.Append("  ").AppendLine(path);
+            }
+
+            message.AppendLine();
+            message.AppendLine("Save them (File, Save), then press Make It Live! again.");
+
+            return message.ToString();
+        }
+
+        private static string BuildCoreRefusal(List<string> problems)
+        {
+            var message = new StringBuilder();
+
+            message.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run");
+            message.AppendLine("for visitors. Every experience needs one unchanged copy of it.");
             message.AppendLine();
 
             foreach (var problem in problems)
             {
                 message.Append("  ").AppendLine(problem);
+                message.AppendLine();
             }
 
-            message.AppendLine();
             message.AppendLine("Save each scene after fixing it, then publish again.");
 
             return message.ToString();
         }
 
-        private static string BuildSpawnSummary(List<string> problems)
+        private static string BuildCoreSummary(List<string> problems)
         {
             var summary = new StringBuilder();
 
-            summary.AppendLine("Players would have nowhere to appear in this build, so the experience would be empty.");
+            summary.AppendLine("U3D CORE - DO NOT DELETE is missing or changed, so this experience would not run");
+            summary.AppendLine("for visitors.");
             summary.AppendLine();
             summary.AppendLine(problems.Count == 1
-                ? "There is 1 scene to fix."
-                : "There are " + problems.Count + " scenes to fix.");
+                ? "There is 1 problem to fix."
+                : "There are " + problems.Count + " problems to fix.");
             summary.AppendLine();
-            summary.AppendLine("The full list, with how to fix each scene, has been copied to your clipboard.");
-            summary.AppendLine("Paste it somewhere you can read it, fix the scenes it names, and publish again.");
+            summary.AppendLine("The full list, with how to fix each one, has been copied to your clipboard.");
+            summary.AppendLine("Paste it somewhere you can read it, fix what it names, and publish again.");
 
             return summary.ToString();
         }
