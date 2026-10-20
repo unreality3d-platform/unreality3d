@@ -15,7 +15,7 @@ namespace U3D.Editor
         {
             tools = new List<CreatorTool>
             {
-                new CreatorTool("🟢 Make Object Spawner", "Spawns a prefab at this location. Turn on 'Networked Spawn' so every player sees the spawned object, then use the component's Register Prefab(s) for Multiplayer button to prepare your prefab.", ApplyObjectSpawner, true),
+                new CreatorTool("🟢 Make Object Spawner", "Spawns a prefab at this location. Turn on 'Networked Spawn' so every player sees the spawned object, then use the component's Set Up Prefab(s) for Multiplayer button to prepare your prefab.", ApplyObjectSpawner, true),
                 new CreatorTool("🟢 Make Grabbable", "Objects can be picked up from an adjustable distance. By default a released object floats where it's let go. Switch on Drop On Release to make it fall, or Throwable to throw it where the player is looking. Pair with Add Grab Point to control exactly how the object sits in the hand.", ApplyGrabbable, true),
                 new CreatorTool("🟢 Add Grab Point", "Controls how a Grabbable sits in the hand. Adds a Grab Point child — move it to where the hand grips the object, and rotate it so its green arrow points away from the player when held. Without one, objects use the Grab Offset field and keep their pickup rotation.", ApplyAddGrabPoint, true),
                 new CreatorTool("🟢 Make Kickable", "Objects on the ground can be propelled forward at foot level", ApplyKickable, true),

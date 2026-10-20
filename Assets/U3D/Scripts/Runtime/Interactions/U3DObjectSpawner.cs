@@ -34,7 +34,7 @@ namespace U3D
         [Tooltip("Optional weighted list of prefabs. When populated, a prefab is chosen based on relative weights each time Spawn is called.")]
         public SpawnEntry[] prefabList;
 
-        [Tooltip("When enabled, everyone in the room sees the spawned object. Use the 'Register Prefab(s) for Multiplayer' button at the bottom of this Inspector to set your prefabs up. When disabled, the object is built on each player's own machine and is never shared, which is what you want for local effects like particle bursts.")]
+        [Tooltip("When enabled, everyone in the room sees the spawned object. Use the 'Set Up Prefab(s) for Multiplayer' button just below this checkbox to set your prefabs up. When disabled, the object is built on each player's own machine and is never shared, which is what you want for local effects like particle bursts.")]
         public bool networkedSpawn = true;
 
         [Header("Spawn Behavior")]
