@@ -476,7 +476,7 @@ namespace U3D.Editor
             if (GUILayout.Button("Skip for Now (Add Later)", EditorStyles.miniButton))
             {
                 if (EditorUtility.DisplayDialog("Skip PayPal Setup?",
-                    "You can add add your PayPal email here later.\n\n" +
+                    "You can add your PayPal email here later.\n\n" +
                     "You'll still be able to publish content, but won't be able to sell it until you add PayPal.\n\n" +
                     "Continue?",
                     "Yes, Skip for Now", "Wait, Let Me Add It"))
