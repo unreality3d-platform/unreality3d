@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace U3D
@@ -49,6 +49,13 @@ namespace U3D
 
         // Events
         public static event System.Action<bool> OnCursorLockStateChanged;
+
+        /// <summary>
+        /// Raised when UI mode turns on or off: Tab, a click back into the world, Esc, or
+        /// entering VR. UI that opens with Tab listens here rather than being assigned to
+        /// the Pause Menu field, so it needs no reference into the CORE prefab.
+        /// </summary>
+        public static event System.Action<bool> OnUIModeChanged;
 
         // Public properties
         // In VR mode, report as "locked" so input code proceeds normally
@@ -224,6 +231,7 @@ namespace U3D
             if (_isEscapedMode) return; // Can't change UI mode while escaped
             if (_isInVRMode) return; // UI mode not applicable in VR
 
+            bool changed = _isUIMode != uiMode;
             _isUIMode = uiMode;
 
             if (_isUIMode)
@@ -244,6 +252,9 @@ namespace U3D
                 if (pauseMenu != null)
                     pauseMenu.SetActive(false);
             }
+
+            if (changed)
+                OnUIModeChanged?.Invoke(_isUIMode);
         }
 
         public void SetEscapedMode(bool escapedMode)
@@ -255,6 +266,7 @@ namespace U3D
             if (_isEscapedMode)
             {
                 // Esc pressed - release cursor completely
+                bool wasUIMode = _isUIMode;
                 _isUIMode = false; // Clear UI mode
                 TrySetCursorLocked(false);
 
@@ -263,6 +275,9 @@ namespace U3D
                     pauseMenu.SetActive(false);
                 if (gameUI != null)
                     gameUI.enabled = false;
+
+                if (wasUIMode)
+                    OnUIModeChanged?.Invoke(false);
             }
             else
             {
@@ -290,8 +305,12 @@ namespace U3D
                 _isCursorLocked = false;
 
                 // Clear UI/escape modes
+                bool wasUIMode = _isUIMode;
                 _isUIMode = false;
                 _isEscapedMode = false;
+
+                if (wasUIMode)
+                    OnUIModeChanged?.Invoke(false);
             }
             else if (!enabled && wasInVR)
             {

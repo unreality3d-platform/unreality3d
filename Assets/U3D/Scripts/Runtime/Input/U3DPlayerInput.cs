@@ -52,6 +52,7 @@ namespace U3D.Input
         private bool _flyPressed;
         private bool _interactPressed;
         private bool _removePressed;
+        private bool _removeRequested;
         private bool _zoomHeld;
         private bool _jumpHeld;
         private bool _crouchHeld;
@@ -512,6 +513,16 @@ namespace U3D.Input
         }
 
         /// <summary>
+        /// Queues one Remove press for an on-screen button. Held apart from the key flag so
+        /// ClearInputCache, which runs every frame the pointer is over UI, can't erase a press
+        /// made by clicking that UI. Merged into the snapshot and cleared when consumed.
+        /// </summary>
+        public void RequestRemove()
+        {
+            _removeRequested = true;
+        }
+
+        /// <summary>
         /// Fills a snapshot from the current cache without changing any state.
         /// Shared by ConsumeInput and PeekInput so the two can never disagree
         /// about what the snapshot contains.
@@ -533,7 +544,7 @@ namespace U3D.Input
             data.InteractPressed = _interactPressed;
             data.TeleportPressed = _teleportPressed;
             data.AutoRunTogglePressed = _autoRunTogglePressed;
-            data.RemovePressed = _removePressed;
+            data.RemovePressed = _removePressed || _removeRequested;
             data.ZoomHeld = _zoomHeld;
 
             data.LeftMouseHeld = _leftMouseHeld;
@@ -567,6 +578,7 @@ namespace U3D.Input
             _teleportPressed = false;
             _autoRunTogglePressed = false;
             _removePressed = false;
+            _removeRequested = false;
             _perspectiveScrollValue = 0f;
 
             return data;

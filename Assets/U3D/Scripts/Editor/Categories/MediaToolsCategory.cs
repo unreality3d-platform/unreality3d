@@ -645,13 +645,14 @@ namespace U3D.Editor
 
         private static void AddSettingsUI()
         {
-            var existing = Object.FindAnyObjectByType<Canvas>();
-            if (existing != null && existing.gameObject.name.Contains("Settings UI"))
+            var existing = Object.FindAnyObjectByType<U3D.UI.U3DSettingsUI>(FindObjectsInactive.Include);
+            if (existing != null)
             {
                 EditorUtility.DisplayDialog("Settings UI",
-                    "A Settings UI Canvas already exists in the scene.\n\nFound: " + existing.gameObject.name,
+                    "A Settings UI already exists in the scene.\n\nFound: " + existing.gameObject.name,
                     "OK");
                 Selection.activeGameObject = existing.gameObject;
+                EditorGUIUtility.PingObject(existing.gameObject);
                 return;
             }
 

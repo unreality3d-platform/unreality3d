@@ -1,10 +1,12 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 
 namespace U3D.UI
 {
     /// <summary>
-    /// Simplified mouse settings UI with only essential controls
+    /// Look settings: sensitivity, mouse smoothing and Y invert. Finds the local player each
+    /// time its panel is shown, because the player spawns at runtime and may not exist yet
+    /// the first time the panel opens.
     /// </summary>
     public class U3DMouseSettingsUI : MonoBehaviour
     {
@@ -14,29 +16,26 @@ namespace U3D.UI
         [SerializeField] private Toggle invertYToggle;
 
         private U3DPlayerController _playerController;
-        private bool _isInitialized = false;
+        private bool _listenersAdded = false;
 
-        void Start()
+        void OnEnable()
         {
-            FindPlayerController();
-            InitializeUI();
-            SetupEventHandlers();
+            if (!_listenersAdded)
+            {
+                InitializeUI();
+                SetupEventHandlers();
+                _listenersAdded = true;
+            }
+
+            _playerController = U3DPlayerController.FindLocalPlayer();
             RefreshUI();
-            _isInitialized = true;
         }
 
-        void FindPlayerController()
+        bool EnsurePlayerController()
         {
-            U3DPlayerController[] controllers = Object.FindObjectsByType<U3DPlayerController>(FindObjectsSortMode.None);
-
-            foreach (var controller in controllers)
-            {
-                if (controller.IsLocalPlayer)
-                {
-                    _playerController = controller;
-                    break;
-                }
-            }
+            if (_playerController == null)
+                _playerController = U3DPlayerController.FindLocalPlayer();
+            return _playerController != null;
         }
 
         void InitializeUI()
@@ -63,6 +62,12 @@ namespace U3D.UI
 
         void RefreshUI()
         {
+            if (invertYToggle != null)
+            {
+                bool isInverted = PlayerPrefs.GetInt("U3D_LookInverted", 0) == 1;
+                invertYToggle.SetIsOnWithoutNotify(isInverted);
+            }
+
             if (_playerController == null) return;
 
             if (sensitivitySlider != null)
@@ -70,39 +75,27 @@ namespace U3D.UI
 
             if (mouseSmoothingToggle != null)
                 mouseSmoothingToggle.SetIsOnWithoutNotify(_playerController.GetMouseSmoothing());
-
-            if (invertYToggle != null)
-            {
-                bool isInverted = PlayerPrefs.GetInt("U3D_LookInverted", 0) == 1;
-                invertYToggle.SetIsOnWithoutNotify(isInverted);
-            }
         }
 
         void OnSensitivityChanged(float value)
         {
-            if (!_isInitialized || _playerController == null) return;
+            if (!EnsurePlayerController()) return;
             _playerController.SetUserSensitivity(value);
         }
 
         void OnMouseSmoothingChanged(bool enabled)
         {
-            if (!_isInitialized || _playerController == null) return;
+            if (!EnsurePlayerController()) return;
             _playerController.SetMouseSmoothing(enabled);
         }
 
         void OnInvertYChanged(bool inverted)
         {
-            if (!_isInitialized) return;
-
-            // Save to PlayerPrefs
             PlayerPrefs.SetInt("U3D_LookInverted", inverted ? 1 : 0);
             PlayerPrefs.Save();
 
-            // Update the PlayerController's lookInverted field immediately
-            if (_playerController != null)
-            {
+            if (EnsurePlayerController())
                 _playerController.SetLookInverted(inverted);
-            }
         }
     }
 }
