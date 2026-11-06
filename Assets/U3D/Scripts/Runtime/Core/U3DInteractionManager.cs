@@ -72,15 +72,15 @@ namespace U3D
         }
 
         /// <summary>
-        /// Called by PlayerController when the interact button is pressed.
-        /// If the player is holding a grabbable, route the press to that object for release.
-        /// Otherwise find the closest interactable within range.
-        ///
-        /// Worldspace UI interaction is NOT handled here — U3DGazePointer reads the Interact
-        /// action directly and runs UI event dispatch in its own Update loop, off the network tick.
+        /// Called by U3DPlayerController for every Interact press, from every device.
+        /// Worldspace UI under the gaze or the VR hand ray is offered the press first; if it uses
+        /// it, nothing else does. Otherwise a held grabbable or an occupied seat takes the press,
+        /// and failing both, the closest interactable in range.
         /// </summary>
         public void OnPlayerInteract()
         {
+            if (U3DGazePointer.TryConsumeInteract()) return;
+
             if (localPlayerController == null) return;
 
             if (U3DGrabbable.CurrentlyGrabbed != null)

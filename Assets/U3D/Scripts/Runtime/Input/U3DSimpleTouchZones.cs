@@ -4,6 +4,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
 using UnityEngine.InputSystem.Utilities;
+using U3D.XR;
 using ETouch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 
 namespace U3D.Input
@@ -117,7 +118,8 @@ namespace U3D.Input
 
         /// <summary>
         /// Raised when ShouldShowTouchHints may have changed: when this component
-        /// starts, and the frame a touch is first observed this session.
+        /// starts, the frame a touch is first observed this session, and whenever
+        /// VR starts or ends.
         /// </summary>
         public static event System.Action TouchHintsVisibilityChanged;
 
@@ -143,13 +145,17 @@ namespace U3D.Input
         }
 
         /// <summary>
-        /// Whether on-screen touch control hints should be visible. True once touch
-        /// controls exist, on a touch-primary device from the start, or on any device
-        /// after its first touch. Visual only: the input path still switches to touch
-        /// on the first observed touch.
+        /// Whether on-screen touch control hints, and the touch layout of screen UI, should
+        /// be visible. True once touch controls exist, on a touch-primary device from the
+        /// start, or on any device after its first touch; never while VR is active, because a
+        /// screen-overlay canvas draws in a headset. Visual only: the input path still
+        /// switches to touch on the first observed touch.
         /// </summary>
         public static bool ShouldShowTouchHints =>
-            Instance != null && (IsTouchPrimaryDevice || Instance.IsTouchEnabled);
+            Instance != null && !IsVRActive && (IsTouchPrimaryDevice || Instance.IsTouchEnabled);
+
+        private static bool IsVRActive =>
+            U3DWebXRManager.Instance != null && U3DWebXRManager.Instance.IsVRActive;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [System.Runtime.InteropServices.DllImport("__Internal")]
@@ -197,6 +203,7 @@ namespace U3D.Input
                 EnhancedTouchSupport.Enable();
                 _enhancedTouchEnabled = true;
             }
+            U3DWebXRManager.OnVRModeChanged += OnVRModeChanged;
         }
 
         void OnDisable()
@@ -206,6 +213,12 @@ namespace U3D.Input
                 EnhancedTouchSupport.Disable();
                 _enhancedTouchEnabled = false;
             }
+            U3DWebXRManager.OnVRModeChanged -= OnVRModeChanged;
+        }
+
+        private void OnVRModeChanged(bool isVRActive)
+        {
+            TouchHintsVisibilityChanged?.Invoke();
         }
 
         /// <summary>

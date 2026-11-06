@@ -368,6 +368,7 @@ MonoBehaviour:
   defaultFOV: 60
   zoomSpeed: 5
   vrEyeOffset: {x: 0, y: 0.08, z: 0.08}
+  vrWristMenuHeight: 11
   vrBodyFollowDeadzone: 60
   vrBodyFollowSpeed: 90
   vrTeleportMaterial: {fileID: 2100000, guid: a7e10d782061a0945ba436b138b3cb07, type: 2}

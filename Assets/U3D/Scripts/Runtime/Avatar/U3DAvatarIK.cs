@@ -293,6 +293,16 @@ namespace U3D
             }
         }
 
+        public bool TryGetRightHandRay(out Vector3 origin, out Vector3 direction)
+        {
+            origin = Vector3.zero;
+            direction = Vector3.forward;
+            if (!_rightHandWritten || _playerRoot == null) return false;
+            origin = _playerRoot.TransformPoint(HeadAnchorLocal() + _rightHandOffset);
+            direction = _playerRoot.rotation * _rightHandLocalRot * Vector3.forward;
+            return true;
+        }
+
         /// <summary>
         /// The head bone's position in player-root space, which is what a stored hand offset
         /// is measured from and what it is composed against.

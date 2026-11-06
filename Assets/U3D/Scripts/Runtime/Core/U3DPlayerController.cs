@@ -149,6 +149,11 @@ public class U3DPlayerController : MonoBehaviour
     [Tooltip("Camera position relative to the avatar's head bone in player-local space. Increase Y if the camera sits too low (pointing at the neck). Increase Z to move the camera forward inside the head. Adjust until the camera lands at eye level when you look at the avatar in a mirror.")]
     [SerializeField] private Vector3 vrEyeOffset = new Vector3(0f, 0.2f, 0.08f);
 
+    [Header("VR Wrist Menu")]
+    [Tooltip("How far the VR wrist menu sits above the back of the avatar's hand, in centimetres (2 to 16). Raise it if the menu sinks into a thick wrist or forearm when the hand bends up. 9 suits the template avatar. Check it in the headset with the wrist bent both ways.")]
+    [Range(2f, 16f)]
+    [SerializeField] private float vrWristMenuHeight = 11f;
+
     [Header("VR Body-Follow-Head")]
     [Tooltip("How far (in degrees) the head may turn away from the body before the body turns to keep up, in degrees. 60 gives a 120-degree free-look range and is close to a real neck limit. The body turns only far enough to bring the head back to this angle, and the view does not turn with it.")]
     [SerializeField] private float vrBodyFollowDeadzone = 60f;
@@ -387,9 +392,9 @@ public class U3DPlayerController : MonoBehaviour
             Debug.LogWarning("U3DPlayerController: No U3DWebGLCursorManager found in the scene. Mouse look requires it. Add the U3D CORE - DO NOT DELETE prefab to this scene.");
         }
 
-        // Camera-forward raycast drives worldspace UI events globally — works on desktop
-        // and in VR with the same code path. Fully local and frame-based: it reads the
-        // Interact action itself and is not part of any input snapshot.
+        // Rays from the eye, and in VR from the right hand, drive worldspace UI events on every
+        // device through one code path. The pointer reads no input: U3DInteractionManager offers
+        // each Interact press to it first through U3DGazePointer.TryConsumeInteract.
         if (_gazePointer == null && playerCamera != null)
         {
             GameObject pointerGO = new GameObject("U3DGazePointer");
@@ -1717,6 +1722,9 @@ public class U3DPlayerController : MonoBehaviour
     /// than to the player root. See EnsureTrackingOrigin for why.
     /// </summary>
     public Transform TrackingOrigin => _trackingOrigin;
+
+    /// <summary>Height of the VR wrist menu above the back of the hand, in metres.</summary>
+    public float VRWristMenuHeight => Mathf.Clamp(vrWristMenuHeight, 2f, 16f) * 0.01f;
 
     /// <summary>
     /// After the two-prefab split a controller only ever exists on the local player,

@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using U3D.Input;
+using U3D.XR;
 
 namespace U3D.UI
 {
@@ -13,7 +14,10 @@ namespace U3D.UI
     /// It shows one row of slots when one row fits at a usable size and two rows otherwise.
     /// Dragging the title toward the screen edge, or tapping it, collapses the bar to a chip
     /// showing only the title, styled like the Settings chip; dragging or tapping the chip opens
-    /// it again. Hidden when the scene has no U3DInventory.
+    /// it again. In VR the canvas is held on the left wrist by U3DWristMount, below the Settings
+    /// chip, as two rows of five. On touch and in VR, while the Settings panel is open the bar
+    /// shows only its chip, below the panel, and returns as it was when Settings closes. Hidden
+    /// when the scene has no U3DInventory.
     /// </summary>
     [DisallowMultipleComponent]
     public class U3DPlayerMenu : MonoBehaviour
@@ -35,7 +39,7 @@ namespace U3D.UI
         [Header("Layout (screen points)")]
         [Tooltip("Slot width and height on desktop.")]
         [SerializeField] private float desktopSlotSize = 64f;
-        [Tooltip("Slot width and height on touch devices. Keep at 44 or more so a fingertip can hit it.")]
+        [Tooltip("Slot width and height on touch devices and in VR. Keep at 44 or more so a fingertip can hit it.")]
         [SerializeField] private float touchSlotSize = 56f;
         [Tooltip("Gap between the bar and the screen edge it sits against, and the margin kept at each side.")]
         [SerializeField] private float edgeMargin = 12f;
@@ -48,6 +52,7 @@ namespace U3D.UI
         [SerializeField] private float dragThreshold = 24f;
 
         private const float InventorySearchInterval = 1f;
+        private const float VRTitleAllowance = 64f;
 
         private Canvas _canvas;
         private RectTransform _canvasRect;
@@ -56,9 +61,17 @@ namespace U3D.UI
         private bool _open;
         private bool _layoutApplied;
         private bool _touchLayout;
+        private bool _vrLayout;
+        private bool _inVR;
+        private bool _settingsOpen;
+        private float _settingsBottom;
         private int _columns;
         private float _topInset;
         private float _dragAccumulated;
+
+        private Canvas RootCanvas => _canvas != null ? _canvas.rootCanvas : null;
+
+        private bool CompactLayout => _inVR || U3DSimpleTouchZones.ShouldShowTouchHints;
 
         void Awake()
         {
@@ -82,13 +95,24 @@ namespace U3D.UI
 
         void OnEnable()
         {
-            U3DSimpleTouchZones.TouchHintsVisibilityChanged += ForceLayout;
+            U3DSimpleTouchZones.TouchHintsVisibilityChanged += OnTouchHintsChanged;
+            U3DWebXRManager.OnVRModeChanged += OnVRModeChanged;
+            U3DSettingsUI.PanelOpenChanged += OnSettingsPanelChanged;
+            if (U3DWebXRManager.Instance != null && U3DWebXRManager.Instance.IsVRActive)
+                OnVRModeChanged(true);
             ForceLayout();
         }
 
         void OnDisable()
         {
-            U3DSimpleTouchZones.TouchHintsVisibilityChanged -= ForceLayout;
+            U3DSimpleTouchZones.TouchHintsVisibilityChanged -= OnTouchHintsChanged;
+            U3DWebXRManager.OnVRModeChanged -= OnVRModeChanged;
+            U3DSettingsUI.PanelOpenChanged -= OnSettingsPanelChanged;
+            if (_inVR)
+            {
+                _inVR = false;
+                U3DWristMount.Release(RootCanvas);
+            }
         }
 
         void OnDestroy()
@@ -115,6 +139,51 @@ namespace U3D.UI
             _inventory.OnSlotChanged.AddListener(OnSlotChanged);
             RefreshAllSlots();
             ApplyVisibility();
+        }
+
+        private void OnTouchHintsChanged()
+        {
+            ApplyVisibility();
+            ForceLayout();
+        }
+
+        // ---------- VR ----------
+
+        private void OnVRModeChanged(bool inVR)
+        {
+            if (inVR == _inVR) return;
+            _inVR = inVR;
+
+            if (inVR)
+                U3DWristMount.Hold(RootCanvas, U3DWristMount.Slot.Lower, VRCanvasSize());
+            else
+                U3DWristMount.Release(RootCanvas);
+
+            ApplyVisibility();
+            ForceLayout();
+        }
+
+        private Vector2 VRCanvasSize()
+        {
+            int columns = U3DInventory.SLOT_COUNT / 2;
+            float width = columns * touchSlotSize + (columns - 1) * slotGrid.spacing.x
+                          + slotGrid.padding.horizontal + BarHorizontalPadding();
+            float height = 2f * touchSlotSize + slotGrid.spacing.y + slotGrid.padding.vertical + VRTitleAllowance;
+
+            if (collapsedChip != null)
+                width = Mathf.Max(width, collapsedChip.rect.width);
+
+            return new Vector2(width, height);
+        }
+
+        // ---------- Settings ----------
+
+        private void OnSettingsPanelChanged(bool open, float panelBottom)
+        {
+            _settingsOpen = open;
+            _settingsBottom = panelBottom;
+            ApplyVisibility();
+            ForceLayout();
         }
 
         // ---------- Slots ----------
@@ -174,8 +243,9 @@ namespace U3D.UI
         private void ApplyVisibility()
         {
             bool hasContent = _inventory != null;
-            if (bar != null) bar.gameObject.SetActive(hasContent && _open);
-            if (collapsedChip != null) collapsedChip.gameObject.SetActive(hasContent && !_open);
+            bool showBar = _open && !(_settingsOpen && CompactLayout);
+            if (bar != null) bar.gameObject.SetActive(hasContent && showBar);
+            if (collapsedChip != null) collapsedChip.gameObject.SetActive(hasContent && !showBar);
         }
 
         /// <summary>EventTrigger target on the title and the collapsed chip.</summary>
@@ -210,7 +280,7 @@ namespace U3D.UI
             _dragAccumulated = 0f;
         }
 
-        /// <summary>EventTrigger target on the title and the collapsed chip. A tap or click toggles.</summary>
+        /// <summary>EventTrigger target on the title and the collapsed chip. A tap, click or VR press toggles.</summary>
         public void OnHandleClick(BaseEventData data)
         {
             SetOpen(!_open);
@@ -227,6 +297,24 @@ namespace U3D.UI
         {
             if (slotGrid == null || _canvasRect == null) return;
 
+            if (_inVR)
+            {
+                if (!force && _layoutApplied && _vrLayout) return;
+
+                _layoutApplied = true;
+                _vrLayout = true;
+                _touchLayout = false;
+                _columns = U3DInventory.SLOT_COUNT / 2;
+
+                slotGrid.cellSize = new Vector2(touchSlotSize, touchSlotSize);
+                slotGrid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+                slotGrid.constraintCount = _columns;
+
+                PlaceAtEdge(bar, 1f, 0f);
+                PlaceAtEdge(collapsedChip, 1f, 0f);
+                return;
+            }
+
             bool touch = U3DSimpleTouchZones.ShouldShowTouchHints;
             float size = touch ? touchSlotSize : desktopSlotSize;
 
@@ -237,11 +325,12 @@ namespace U3D.UI
             int columns = oneRowWidth <= available ? U3DInventory.SLOT_COUNT : U3DInventory.SLOT_COUNT / 2;
             float topInset = touch ? U3DCanvasCssScaler.SafeAreaTopCss : 0f;
 
-            if (!force && _layoutApplied && touch == _touchLayout && columns == _columns
+            if (!force && _layoutApplied && !_vrLayout && touch == _touchLayout && columns == _columns
                 && Mathf.Approximately(slotGrid.cellSize.x, size) && Mathf.Approximately(topInset, _topInset))
                 return;
 
             _layoutApplied = true;
+            _vrLayout = false;
             _touchLayout = touch;
             _columns = columns;
             _topInset = topInset;
@@ -252,8 +341,11 @@ namespace U3D.UI
 
             if (touch)
             {
-                PlaceAtEdge(bar, 1f, -(touchTopOffset + topInset));
-                PlaceAtEdge(collapsedChip, 1f, -(touchTopOffset + topInset));
+                float top = touchTopOffset + topInset;
+                if (_settingsOpen)
+                    top = Mathf.Max(top, _settingsBottom + edgeMargin);
+                PlaceAtEdge(bar, 1f, -top);
+                PlaceAtEdge(collapsedChip, 1f, -top);
             }
             else
             {

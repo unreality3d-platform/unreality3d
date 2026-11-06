@@ -1,5 +1,7 @@
 mergeInto(LibraryManager.library, {
     U3D_IsTouchPrimaryDevice: function () {
+        var ua = (navigator && navigator.userAgent) ? navigator.userAgent : '';
+        if (/OculusBrowser|PicoBrowser|\bQuest\b/.test(ua)) return 0;
         return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 1 : 0;
     },
 
