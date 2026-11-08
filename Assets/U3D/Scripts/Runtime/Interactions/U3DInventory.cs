@@ -13,6 +13,10 @@ namespace U3D
     /// Items are added by U3DCollectable. Pressing a slot's hotkey spawns that
     /// slot's prefab at the local player's hand bone and activates it.
     ///
+    /// When a player menu offers the Inventory, the menu reads the hotkeys and
+    /// calls UseSlot, so the keys follow the page the menu shows. The inventory
+    /// polls its own hotkeys only when no menu has claimed them.
+    ///
     /// Activation is routed through IU3DInventoryActivatable when the spawned
     /// component implements it (Grabbable, Kickable — components whose
     /// IU3DInteractable.OnInteract() path has a proximity gate that doesn't apply
@@ -41,14 +45,16 @@ namespace U3D
     {
         public const int SLOT_COUNT = 10;
 
-        [Header("Hotkeys (one per slot)")]
-        [Tooltip("Keys that activate each inventory slot, in slot order. Default: 1, 2, 3, 4, 5, 6, 7, 8, 9, 0. Remap freely per scene.")]
-        [SerializeField]
-        private KeyCode[] slotHotkeys = new KeyCode[SLOT_COUNT]
+        private static readonly KeyCode[] DefaultHotkeys = new KeyCode[SLOT_COUNT]
         {
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9, KeyCode.Alpha0
         };
+
+        [Header("Hotkeys (one per slot)")]
+        [Tooltip("Keys that activate each inventory slot, in slot order. Default: 1, 2, 3, 4, 5, 6, 7, 8, 9, 0. Remap freely per scene. When the player menu offers Emotes too, the same keys send emotes while the Emotes page shows.")]
+        [SerializeField]
+        private KeyCode[] slotHotkeys = (KeyCode[])DefaultHotkeys.Clone();
 
         [Header("Hand Attachment")]
         [Tooltip("Which hand summoned items appear in. Works on any humanoid avatar without naming bones. Matches U3DGrabbable's default.")]
@@ -78,6 +84,12 @@ namespace U3D
         [Tooltip("Fired when a slot hotkey press is blocked because the live spawn limit is reached. The banked stack is not consumed. Wire to UI feedback like a 'too many out — pick some up' message. Arg: the prefab that would have spawned.")]
         public UnityEvent<GameObject> OnSpawnLimitReached;
 
+        /// <summary>
+        /// Set by the player menu while it reads these hotkeys itself. While true, the
+        /// inventory does not poll the keyboard, so a key press is handled once.
+        /// </summary>
+        public bool HotkeysClaimed { get; set; }
+
         private NetPrefab[] slotPrefabs = new NetPrefab[SLOT_COUNT];
         private int[] slotCounts = new int[SLOT_COUNT];
 
@@ -103,11 +115,7 @@ namespace U3D
             if (slotHotkeys == null || slotHotkeys.Length != SLOT_COUNT)
             {
                 Debug.LogWarning($"U3DInventory on '{name}': slotHotkeys must have exactly {SLOT_COUNT} entries. Resetting to defaults.", this);
-                slotHotkeys = new KeyCode[SLOT_COUNT]
-                {
-                    KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
-                    KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9, KeyCode.Alpha0
-                };
+                slotHotkeys = (KeyCode[])DefaultHotkeys.Clone();
             }
         }
 
@@ -121,7 +129,7 @@ namespace U3D
                 keyConflictsChecked = true;
             }
 
-            if (Keyboard.current == null) return;
+            if (HotkeysClaimed || Keyboard.current == null) return;
 
             for (int i = 0; i < SLOT_COUNT; i++)
             {
@@ -459,9 +467,9 @@ namespace U3D
         /// <summary>
         /// Maps a legacy KeyCode to the new Input System's KeyControl on the current Keyboard.
         /// Covers the keys creators would realistically pick for inventory hotkeys:
-        /// digits, letters, and common function/modifier keys.
+        /// digits, letters, and common function/modifier keys. Also used by the player menu.
         /// </summary>
-        private static KeyControl ResolveKeyControl(KeyCode key)
+        public static KeyControl ResolveKeyControl(KeyCode key)
         {
             Keyboard kb = Keyboard.current;
             if (kb == null) return null;
@@ -547,6 +555,13 @@ namespace U3D
             }
         }
 
+        /// <summary>The key a slot uses when no inventory has remapped it: 1 to 9, then 0.</summary>
+        public static KeyCode DefaultHotkey(int slotIndex)
+        {
+            if (slotIndex < 0 || slotIndex >= SLOT_COUNT) return KeyCode.None;
+            return DefaultHotkeys[slotIndex];
+        }
+
         // ---------- Read-only API for UI building ----------
 
         public int GetSlotCount(int slotIndex)
@@ -566,6 +581,7 @@ namespace U3D
             if (slotIndex < 0 || slotIndex >= SLOT_COUNT) return false;
             return slotPrefabs[slotIndex].IsValid;
         }
+
         public KeyCode GetSlotHotkey(int slotIndex)
         {
             if (slotIndex < 0 || slotIndex >= SLOT_COUNT) return KeyCode.None;

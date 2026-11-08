@@ -1,6 +1,8 @@
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
 using UnityEngine.UI;
 using U3D.Input;
 using U3D.XR;
@@ -10,11 +12,15 @@ namespace U3D.UI
     /// <summary>
     /// The player menu bar. It offers up to two menus in the same ten slots: Inventory, where each
     /// slot shows an item's name, stack count and hotkey and pressing it uses the item exactly as
-    /// its hotkey does, and Emotes, where each slot shows an emote and pressing it sends that emote
-    /// to everyone in the room. Menus decides which the bar offers. With both, the arrows beside the
-    /// title switch between them, Inventory shows first, and the bar remembers the menu the player
-    /// last chose. Inventory needs a U3DInventory in the scene and Emotes needs the local player's
-    /// U3DEmote; the bar is hidden while it has neither.
+    /// its hotkey does, and Emotes, where each slot shows an emote and its key and pressing it sends
+    /// that emote to everyone in the room. Menus decides which the bar offers. With both, the arrows
+    /// beside the title switch between them, Emotes shows first, and the bar remembers the menu the
+    /// player last chose. Inventory needs a U3DInventory in the scene and Emotes needs the local
+    /// player's U3DEmote; the bar is hidden while the menu it would show has neither.
+    ///
+    /// The slot keys (the Inventory's hotkeys, or 1 to 0 without an Inventory) act on whichever menu
+    /// the bar shows, including while it is collapsed. The bar reads them itself and the Inventory
+    /// stops reading them while the bar is active.
     ///
     /// On desktop the bar sits at bottom centre. On touch devices it sits at top centre, below the
     /// Settings chip when the scene has a Settings UI. It shows one row of slots when one row fits at
@@ -84,6 +90,7 @@ namespace U3D.UI
         private U3DInventory _inventory;
         private U3DEmote _emote;
         private bool _emoteBound;
+        private bool _emoteMissing;
         private float _nextInventorySearch;
         private float _nextEmoteSearch;
         private bool _open;
@@ -107,11 +114,13 @@ namespace U3D.UI
 
         private bool EmotesAvailable => menus != Menus.Inventory && _emote != null && _emote.EmoteSet != null;
 
+        private bool EmotesPending => menus != Menus.Inventory && _emote == null && !_emoteMissing;
+
         private Page ShownPage
         {
             get
             {
-                if (_page == Page.Emotes && EmotesAvailable) return Page.Emotes;
+                if (_page == Page.Emotes && (EmotesAvailable || EmotesPending)) return Page.Emotes;
                 if (InventoryAvailable) return Page.Inventory;
                 return Page.Emotes;
             }
@@ -126,7 +135,7 @@ namespace U3D.UI
             if (_canvas != null) _canvasRect = _canvas.transform as RectTransform;
 
             _open = PlayerPrefs.GetInt(OpenPrefKey, startOpen ? 1 : 0) == 1;
-            _page = PlayerPrefs.GetInt(PagePrefKey, (int)Page.Inventory) == (int)Page.Emotes ? Page.Emotes : Page.Inventory;
+            _page = PlayerPrefs.GetInt(PagePrefKey, (int)Page.Emotes) == (int)Page.Inventory ? Page.Inventory : Page.Emotes;
             _hasSettings = FindAnyObjectByType<U3DSettingsUI>(FindObjectsInactive.Include) != null;
 
             for (int i = 0; i < slots.Length; i++)
@@ -150,6 +159,7 @@ namespace U3D.UI
             U3DSimpleTouchZones.TouchHintsVisibilityChanged += OnTouchHintsChanged;
             U3DWebXRManager.OnVRModeChanged += OnVRModeChanged;
             U3DSettingsUI.PanelOpenChanged += OnSettingsPanelChanged;
+            if (_inventory != null) _inventory.HotkeysClaimed = true;
             if (U3DWebXRManager.Instance != null && U3DWebXRManager.Instance.IsVRActive)
                 OnVRModeChanged(true);
             ForceLayout();
@@ -160,6 +170,7 @@ namespace U3D.UI
             U3DSimpleTouchZones.TouchHintsVisibilityChanged -= OnTouchHintsChanged;
             U3DWebXRManager.OnVRModeChanged -= OnVRModeChanged;
             U3DSettingsUI.PanelOpenChanged -= OnSettingsPanelChanged;
+            if (_inventory != null) _inventory.HotkeysClaimed = false;
             if (_inVR)
             {
                 _inVR = false;
@@ -170,12 +181,15 @@ namespace U3D.UI
         void OnDestroy()
         {
             if (_inventory != null)
+            {
+                _inventory.HotkeysClaimed = false;
                 _inventory.OnSlotChanged.RemoveListener(OnSlotChanged);
+            }
         }
 
         void Update()
         {
-            if (_inventory == null && menus != Menus.Emotes && Time.unscaledTime >= _nextInventorySearch)
+            if (_inventory == null && Time.unscaledTime >= _nextInventorySearch)
             {
                 _nextInventorySearch = Time.unscaledTime + SearchInterval;
                 U3DInventory found = FindAnyObjectByType<U3DInventory>();
@@ -185,6 +199,7 @@ namespace U3D.UI
             if (_emoteBound && _emote == null)
             {
                 _emoteBound = false;
+                _emoteMissing = false;
                 Refresh();
             }
 
@@ -192,10 +207,22 @@ namespace U3D.UI
             {
                 _nextEmoteSearch = Time.unscaledTime + SearchInterval;
                 U3DPlayerController player = U3DPlayerController.FindLocalPlayer();
-                U3DEmote emote = player != null ? player.GetComponent<U3DEmote>() : null;
-                if (emote != null && emote.EmoteSet != null) BindEmotes(emote);
+                if (player != null)
+                {
+                    U3DEmote emote = player.GetComponent<U3DEmote>();
+                    if (emote != null && emote.EmoteSet != null)
+                    {
+                        BindEmotes(emote);
+                    }
+                    else if (!_emoteMissing)
+                    {
+                        _emoteMissing = true;
+                        Refresh();
+                    }
+                }
             }
 
+            PollHotkeys();
             UpdateLayout(false);
         }
 
@@ -203,6 +230,7 @@ namespace U3D.UI
         {
             _inventory = inventory;
             _inventory.OnSlotChanged.AddListener(OnSlotChanged);
+            _inventory.HotkeysClaimed = isActiveAndEnabled;
             Refresh();
         }
 
@@ -210,6 +238,7 @@ namespace U3D.UI
         {
             _emote = emote;
             _emoteBound = true;
+            _emoteMissing = false;
             Refresh();
         }
 
@@ -217,6 +246,26 @@ namespace U3D.UI
         {
             ApplyVisibility();
             ForceLayout();
+        }
+
+        // ---------- Keys ----------
+
+        private void PollHotkeys()
+        {
+            if (Keyboard.current == null) return;
+            if (!InventoryAvailable && !EmotesAvailable) return;
+
+            for (int i = 0; i < U3DInventory.SLOT_COUNT; i++)
+            {
+                KeyControl key = U3DInventory.ResolveKeyControl(SlotHotkey(i));
+                if (key != null && key.wasPressedThisFrame)
+                    OnSlotPressed(i);
+            }
+        }
+
+        private KeyCode SlotHotkey(int index)
+        {
+            return _inventory != null ? _inventory.GetSlotHotkey(index) : U3DInventory.DefaultHotkey(index);
         }
 
         // ---------- VR ----------
@@ -313,7 +362,7 @@ namespace U3D.UI
             if (ShownPage == Page.Emotes)
             {
                 Sprite sprite = EmotesAvailable ? _emote.EmoteSet.GetSprite(index) : null;
-                slots[index].Show(string.Empty, 0, string.Empty);
+                slots[index].Show(string.Empty, 0, sprite != null ? KeyLabel(SlotHotkey(index)) : string.Empty);
                 slots[index].ShowIcon(sprite);
                 return;
             }
@@ -353,7 +402,7 @@ namespace U3D.UI
 
         private void ApplyVisibility()
         {
-            bool hasContent = InventoryAvailable || EmotesAvailable;
+            bool hasContent = ShownPage == Page.Emotes ? EmotesAvailable : InventoryAvailable;
             bool showBar = _open && !(_settingsOpen && CompactLayout);
             if (bar != null) bar.gameObject.SetActive(hasContent && showBar);
             if (collapsedChip != null) collapsedChip.gameObject.SetActive(hasContent && !showBar);
