@@ -8,21 +8,46 @@ using U3D.XR;
 namespace U3D.UI
 {
     /// <summary>
-    /// The player menu bar: the local player's inventory slots, each showing the item's name,
-    /// stack count and hotkey. Pressing a slot uses it exactly as its hotkey does. On desktop the
-    /// bar sits at bottom centre; on touch devices it sits at top centre below the Settings chip.
-    /// It shows one row of slots when one row fits at a usable size and two rows otherwise.
-    /// Dragging the title toward the screen edge, or tapping it, collapses the bar to a chip
-    /// showing only the title, styled like the Settings chip; dragging or tapping the chip opens
-    /// it again. In VR the canvas is held on the left wrist by U3DWristMount, below the Settings
-    /// chip, as two rows of five. On touch and in VR, while the Settings panel is open the bar
-    /// shows only its chip, below the panel, and returns as it was when Settings closes. Hidden
-    /// when the scene has no U3DInventory.
+    /// The player menu bar. It offers up to two menus in the same ten slots: Inventory, where each
+    /// slot shows an item's name, stack count and hotkey and pressing it uses the item exactly as
+    /// its hotkey does, and Emotes, where each slot shows an emote and pressing it sends that emote
+    /// to everyone in the room. Menus decides which the bar offers. With both, the arrows beside the
+    /// title switch between them, Inventory shows first, and the bar remembers the menu the player
+    /// last chose. Inventory needs a U3DInventory in the scene and Emotes needs the local player's
+    /// U3DEmote; the bar is hidden while it has neither.
+    ///
+    /// On desktop the bar sits at bottom centre. On touch devices it sits at top centre, below the
+    /// Settings chip when the scene has a Settings UI. It shows one row of slots when one row fits at
+    /// a usable size and two rows otherwise. Dragging the title toward the screen edge, or tapping
+    /// it, collapses the bar to a chip showing only the title; dragging or tapping the chip opens it
+    /// again. In VR the canvas is held on the left wrist by U3DWristMount, below the Settings chip,
+    /// as two rows of five. On touch and in VR, while the Settings panel is open the bar shows only
+    /// its chip, below the panel, and returns as it was when Settings closes.
     /// </summary>
     [DisallowMultipleComponent]
     public class U3DPlayerMenu : MonoBehaviour
     {
+        public enum Menus
+        {
+            Inventory = 0,
+            Emotes = 1,
+            [InspectorName("Inventory and Emotes")] InventoryAndEmotes = 2
+        }
+
+        private enum Page
+        {
+            Inventory = 0,
+            Emotes = 1
+        }
+
         private const string OpenPrefKey = "U3D_PlayerMenuOpen";
+        private const string PagePrefKey = "U3D_PlayerMenuPage";
+        private const string InventoryTitle = "Inventory";
+        private const string EmotesTitle = "Emotes";
+
+        [Header("Menus")]
+        [Tooltip("Which menus the bar offers. With both, players switch between them with the arrows beside the title. Inventory appears only when the scene has an Inventory.")]
+        [SerializeField] private Menus menus = Menus.InventoryAndEmotes;
 
         [Header("Parts")]
         [SerializeField] private RectTransform bar;
@@ -33,7 +58,7 @@ namespace U3D.UI
         [SerializeField] private GridLayoutGroup slotGrid;
         [SerializeField] private U3DPlayerMenuSlot[] slots = new U3DPlayerMenuSlot[U3DInventory.SLOT_COUNT];
         [SerializeField] private TextMeshProUGUI titleLabel;
-        [Tooltip("Arrows that switch between Inventory and Emotes. Hidden until Emotes exist.")]
+        [Tooltip("Arrows that switch between Inventory and Emotes. Shown only when the bar offers both.")]
         [SerializeField] private GameObject modeArrows;
 
         [Header("Layout (screen points)")]
@@ -43,7 +68,7 @@ namespace U3D.UI
         [SerializeField] private float touchSlotSize = 56f;
         [Tooltip("Gap between the bar and the screen edge it sits against, and the margin kept at each side.")]
         [SerializeField] private float edgeMargin = 12f;
-        [Tooltip("Distance from the top of the screen to the bar on touch devices, below any notch or camera cutout. Leaves room for the Settings chip above it.")]
+        [Tooltip("Distance from the top of the screen to the bar on touch devices, below any notch or camera cutout, when the scene has a Settings UI. Leaves room for the Settings chip above it.")]
         [SerializeField] private float touchTopOffset = 56f;
 
         [Header("Collapse")]
@@ -51,14 +76,19 @@ namespace U3D.UI
         [Tooltip("How far, in screen points, a drag on the title or the collapsed chip must travel to collapse or open the bar.")]
         [SerializeField] private float dragThreshold = 24f;
 
-        private const float InventorySearchInterval = 1f;
+        private const float SearchInterval = 1f;
         private const float VRTitleAllowance = 64f;
 
         private Canvas _canvas;
         private RectTransform _canvasRect;
         private U3DInventory _inventory;
+        private U3DEmote _emote;
+        private bool _emoteBound;
         private float _nextInventorySearch;
+        private float _nextEmoteSearch;
         private bool _open;
+        private Page _page;
+        private bool _hasSettings;
         private bool _layoutApplied;
         private bool _touchLayout;
         private bool _vrLayout;
@@ -73,12 +103,31 @@ namespace U3D.UI
 
         private bool CompactLayout => _inVR || U3DSimpleTouchZones.ShouldShowTouchHints;
 
+        private bool InventoryAvailable => menus != Menus.Emotes && _inventory != null;
+
+        private bool EmotesAvailable => menus != Menus.Inventory && _emote != null && _emote.EmoteSet != null;
+
+        private Page ShownPage
+        {
+            get
+            {
+                if (_page == Page.Emotes && EmotesAvailable) return Page.Emotes;
+                if (InventoryAvailable) return Page.Inventory;
+                return Page.Emotes;
+            }
+        }
+
+        /// <summary>Which menus the bar offers.</summary>
+        public Menus ShownMenus => menus;
+
         void Awake()
         {
             _canvas = GetComponentInParent<Canvas>();
             if (_canvas != null) _canvasRect = _canvas.transform as RectTransform;
 
             _open = PlayerPrefs.GetInt(OpenPrefKey, startOpen ? 1 : 0) == 1;
+            _page = PlayerPrefs.GetInt(PagePrefKey, (int)Page.Inventory) == (int)Page.Emotes ? Page.Emotes : Page.Inventory;
+            _hasSettings = FindAnyObjectByType<U3DSettingsUI>(FindObjectsInactive.Include) != null;
 
             for (int i = 0; i < slots.Length; i++)
             {
@@ -87,10 +136,13 @@ namespace U3D.UI
                 slots[i].Button.onClick.AddListener(() => OnSlotPressed(index));
             }
 
-            if (modeArrows != null) modeArrows.SetActive(false);
-            if (collapsedLabel != null && titleLabel != null) collapsedLabel.text = titleLabel.text;
+            if (modeArrows != null)
+            {
+                foreach (Button arrow in modeArrows.GetComponentsInChildren<Button>(true))
+                    arrow.onClick.AddListener(SwitchPage);
+            }
 
-            ApplyVisibility();
+            Refresh();
         }
 
         void OnEnable()
@@ -123,11 +175,25 @@ namespace U3D.UI
 
         void Update()
         {
-            if (_inventory == null && Time.unscaledTime >= _nextInventorySearch)
+            if (_inventory == null && menus != Menus.Emotes && Time.unscaledTime >= _nextInventorySearch)
             {
-                _nextInventorySearch = Time.unscaledTime + InventorySearchInterval;
+                _nextInventorySearch = Time.unscaledTime + SearchInterval;
                 U3DInventory found = FindAnyObjectByType<U3DInventory>();
                 if (found != null) BindInventory(found);
+            }
+
+            if (_emoteBound && _emote == null)
+            {
+                _emoteBound = false;
+                Refresh();
+            }
+
+            if (_emote == null && menus != Menus.Inventory && Time.unscaledTime >= _nextEmoteSearch)
+            {
+                _nextEmoteSearch = Time.unscaledTime + SearchInterval;
+                U3DPlayerController player = U3DPlayerController.FindLocalPlayer();
+                U3DEmote emote = player != null ? player.GetComponent<U3DEmote>() : null;
+                if (emote != null && emote.EmoteSet != null) BindEmotes(emote);
             }
 
             UpdateLayout(false);
@@ -137,8 +203,14 @@ namespace U3D.UI
         {
             _inventory = inventory;
             _inventory.OnSlotChanged.AddListener(OnSlotChanged);
-            RefreshAllSlots();
-            ApplyVisibility();
+            Refresh();
+        }
+
+        private void BindEmotes(U3DEmote emote)
+        {
+            _emote = emote;
+            _emoteBound = true;
+            Refresh();
         }
 
         private void OnTouchHintsChanged()
@@ -186,17 +258,46 @@ namespace U3D.UI
             ForceLayout();
         }
 
+        // ---------- Menus ----------
+
+        private void SwitchPage()
+        {
+            if (!InventoryAvailable || !EmotesAvailable) return;
+
+            _page = ShownPage == Page.Inventory ? Page.Emotes : Page.Inventory;
+            PlayerPrefs.SetInt(PagePrefKey, (int)_page);
+            PlayerPrefs.Save();
+            Refresh();
+        }
+
+        private void Refresh()
+        {
+            string title = ShownPage == Page.Emotes ? EmotesTitle : InventoryTitle;
+            if (titleLabel != null) titleLabel.text = title;
+            if (collapsedLabel != null) collapsedLabel.text = title;
+
+            RefreshAllSlots();
+            ApplyVisibility();
+        }
+
         // ---------- Slots ----------
 
         private void OnSlotPressed(int index)
         {
+            if (ShownPage == Page.Emotes)
+            {
+                if (EmotesAvailable) _emote.Send(index);
+                return;
+            }
+
             if (_inventory != null)
                 _inventory.UseSlot(index);
         }
 
         private void OnSlotChanged(int index, GameObject prefab, int count)
         {
-            RefreshSlot(index);
+            if (ShownPage == Page.Inventory)
+                RefreshSlot(index);
         }
 
         private void RefreshAllSlots()
@@ -208,6 +309,16 @@ namespace U3D.UI
         private void RefreshSlot(int index)
         {
             if (index < 0 || index >= slots.Length || slots[index] == null) return;
+
+            if (ShownPage == Page.Emotes)
+            {
+                Sprite sprite = EmotesAvailable ? _emote.EmoteSet.GetSprite(index) : null;
+                slots[index].Show(string.Empty, 0, string.Empty);
+                slots[index].ShowIcon(sprite);
+                return;
+            }
+
+            slots[index].ShowIcon(null);
 
             string key = _inventory != null ? KeyLabel(_inventory.GetSlotHotkey(index)) : string.Empty;
             GameObject prefab = _inventory != null ? _inventory.GetSlotPrefab(index) : null;
@@ -242,10 +353,11 @@ namespace U3D.UI
 
         private void ApplyVisibility()
         {
-            bool hasContent = _inventory != null;
+            bool hasContent = InventoryAvailable || EmotesAvailable;
             bool showBar = _open && !(_settingsOpen && CompactLayout);
             if (bar != null) bar.gameObject.SetActive(hasContent && showBar);
             if (collapsedChip != null) collapsedChip.gameObject.SetActive(hasContent && !showBar);
+            if (modeArrows != null) modeArrows.SetActive(InventoryAvailable && EmotesAvailable);
         }
 
         /// <summary>EventTrigger target on the title and the collapsed chip.</summary>
@@ -341,7 +453,7 @@ namespace U3D.UI
 
             if (touch)
             {
-                float top = touchTopOffset + topInset;
+                float top = (_hasSettings ? touchTopOffset : edgeMargin) + topInset;
                 if (_settingsOpen)
                     top = Mathf.Max(top, _settingsBottom + edgeMargin);
                 PlaceAtEdge(bar, 1f, -top);

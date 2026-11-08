@@ -1,0 +1,53 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ffd745d34ab9dd43b766cf531e37e1a, type: 3}
+  m_Name: U3D_EmoteSet
+  m_EditorClassIdentifier: U3D.Runtime::U3D.U3DEmoteSet
+  emotes:
+  - displayName: Wave
+    sprite: {fileID: 1208786671, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Thumbs up
+    sprite: {fileID: -906807733, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Laugh
+    sprite: {fileID: -1430405702, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Heart
+    sprite: {fileID: -677925192, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Clap
+    sprite: {fileID: -1429587029, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Smile
+    sprite: {fileID: 22630957, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Wow
+    sprite: {fileID: -36260181, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Question
+    sprite: {fileID: 1817280021, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Broken heart
+    sprite: {fileID: -58367300, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  - displayName: Sparkles
+    sprite: {fileID: 193584566, guid: 03aef8c0a26b2c74dba62aa8683dced0, type: 3}
+    sound: {fileID: 0}
+  defaultSound: {fileID: 8300000, guid: 98dc149b51b9e784f9a3b4eb62927fb8, type: 3}
+  output: {fileID: 3582458508290928436, guid: 0ca192ea063c5be4e91ea63fc2288b27, type: 2}
+  swirlPrefab: {fileID: 9156844041775683072, guid: 13ce863a8ea15514baf8ba98c888cb8b, type: 3}
+  ringRadius: 0.7
+  emitHeight: 0.7
+  particlesPerEmote: 8
+  emitDuration: 0.4
+  sendInterval: 1

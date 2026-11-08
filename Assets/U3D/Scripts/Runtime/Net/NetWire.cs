@@ -233,9 +233,15 @@ namespace U3D.Net
             table[TagArrivalState] = new Descriptor(null, false, NetChannel.Reliable, null,
                 sessionOwned: true);
 
-            // Reserved. Both have a format on record and no producer anywhere.
+            // Reserved. Text chat has a format on record and no producer yet.
             table[TagChat] = new Descriptor(null, false, NetChannel.Reliable, null);
-            table[TagEmote] = new Descriptor(null, false, NetChannel.Reliable, null);
+
+            // An emote: the index of one entry in the emote set, played as a swirl around the
+            // sender's avatar on every machine. The object ID in the frame is the sender's own
+            // avatar, so a receiver can check that the sender owns it. Indices are permanent, so
+            // two builds agree on what each one shows; an index a build does not have plays nothing.
+            table[TagEmote] = new Descriptor(NetKeys.PlayerEmote, true, NetChannel.Reliable,
+                new[] { NetField.UShort });
 
             // A platform on an authored route. Position and rotation, then the route
             // bookkeeping a receiver needs to carry on from the same place: the waypoint

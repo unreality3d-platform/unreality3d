@@ -22,6 +22,7 @@
 
         public const string AttachmentsWorn = "attachments.worn";
         public const string AvatarPose = "avatar.pose";
+        public const string PlayerEmote = "player.emote";
 
         public const string InteractTriggered = "interact.triggered";
 

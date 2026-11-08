@@ -69,6 +69,7 @@ GameObject:
   - component: {fileID: 8532968727575870544}
   - component: {fileID: 5865357087047263811}
   - component: {fileID: 6313008612336302753}
+  - component: {fileID: 5523138026101367745}
   m_Layer: 0
   m_Name: U3D_RemoteAvatar
   m_TagString: Untagged
@@ -161,3 +162,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c2d04ee4fd22264e84645d6ec1edcf1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: U3D.Runtime::U3D.U3DPlayerAttachments
+--- !u!114 &5523138026101367745
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8488662624428376917}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3dcbeffe1b07af74fb41559e42ab5580, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: U3D.Runtime::U3D.U3DEmote
+  emoteSet: {fileID: 11400000, guid: 9b4deb2756e71874c9389e03c508dd4d, type: 2}

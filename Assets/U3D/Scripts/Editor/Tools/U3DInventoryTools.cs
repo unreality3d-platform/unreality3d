@@ -15,67 +15,59 @@ namespace U3D.Editor
         private const string PlayerMenuPrefabPath = "Assets/U3D/Prefabs/U3D Player Menu Canvas.prefab";
         private const string PlayerMenuInstanceName = "U3D Player Menu";
 
+        private enum MenuResult { Created, Extended, AlreadyIncluded, Failed }
+
         /// <summary>
-        /// Adds a new Inventory GameObject to the scene at the scene view pivot, then offers the
-        /// player menu so players can see what they're carrying. Ignores current selection
-        /// (matches U3DScorableTools.AddScorable's pattern).
+        /// Adds an Inventory to the scene if it has none, and makes sure the scene's player menu
+        /// offers it, placing the menu if there is none. Touch and VR players have no number keys,
+        /// so the menu is how they use what they carry.
         /// </summary>
         public static void AddInventory()
         {
-            U3DInventory existing = Object.FindAnyObjectByType<U3DInventory>();
-            if (existing != null)
+            U3DInventory inventory = Object.FindAnyObjectByType<U3DInventory>();
+            bool createdInventory = false;
+
+            if (inventory == null)
             {
-                Debug.Log("U3DInventory already exists in this scene. Selecting the existing one.");
-                Selection.activeGameObject = existing.gameObject;
-                EditorGUIUtility.PingObject(existing.gameObject);
-                return;
+                inventory = CreateInventory().GetComponent<U3DInventory>();
+                createdInventory = true;
             }
 
-            GameObject inventoryObj = CreateInventory();
+            MenuResult result = EnsureMenuIncludes(U3DPlayerMenu.Menus.Inventory, out _);
 
-            if (FindPlayerMenu() == null)
-            {
-                bool add = EditorUtility.DisplayDialog(
-                    "Add Inventory",
-                    "Add the Player Menu too?\n\n" +
-                    "It shows players what they're carrying, how many, and which key uses each item. " +
-                    "Touch players use it to take items out, since they have no number keys.",
-                    "Add Player Menu",
-                    "Not Now");
+            if (!createdInventory && result == MenuResult.AlreadyIncluded)
+                EditorUtility.DisplayDialog("Add Inventory",
+                    "This scene already has an Inventory, and its player menu already offers it.",
+                    "OK");
 
-                if (add)
-                    CreatePlayerMenu();
-            }
-
-            Selection.activeGameObject = inventoryObj;
-            EditorGUIUtility.PingObject(inventoryObj);
+            Selection.activeGameObject = inventory.gameObject;
+            EditorGUIUtility.PingObject(inventory.gameObject);
         }
 
         /// <summary>
-        /// Adds the player menu bar to the scene, plus an Inventory if the scene has none,
-        /// since the bar has nothing to show without one.
+        /// Makes sure the scene's player menu offers Emotes, placing the menu if there is none.
+        /// Builds the emote assets first if the project lacks them.
         /// </summary>
+        public static void AddEmotes()
+        {
+            if (!U3DEmoteTools.EnsureEmoteAssets()) return;
+
+            MenuResult result = EnsureMenuIncludes(U3DPlayerMenu.Menus.Emotes, out U3DPlayerMenu menu);
+            if (result == MenuResult.Failed) return;
+
+            if (result == MenuResult.AlreadyIncluded)
+                EditorUtility.DisplayDialog("Add Emotes",
+                    "This scene's player menu already offers Emotes.",
+                    "OK");
+
+            Selection.activeGameObject = menu.gameObject;
+            EditorGUIUtility.PingObject(menu.gameObject);
+        }
+
+        [System.Obsolete("Use AddInventory or AddEmotes. The player menu now follows the features a scene has.")]
         public static void AddPlayerMenu()
         {
-            U3DPlayerMenu existing = FindPlayerMenu();
-            if (existing != null)
-            {
-                EditorUtility.DisplayDialog("Add Player Menu",
-                    "This scene already has a Player Menu.\n\nFound: " + existing.gameObject.name,
-                    "OK");
-                Selection.activeGameObject = existing.gameObject;
-                EditorGUIUtility.PingObject(existing.gameObject);
-                return;
-            }
-
-            GameObject instance = CreatePlayerMenu();
-            if (instance == null) return;
-
-            if (Object.FindAnyObjectByType<U3DInventory>() == null)
-                CreateInventory();
-
-            Selection.activeGameObject = instance;
-            EditorGUIUtility.PingObject(instance);
+            AddInventory();
         }
 
         private static GameObject CreateInventory()
@@ -94,6 +86,41 @@ namespace U3D.Editor
         private static U3DPlayerMenu FindPlayerMenu()
         {
             return Object.FindAnyObjectByType<U3DPlayerMenu>(FindObjectsInactive.Include);
+        }
+
+        /// <summary>
+        /// Makes sure the scene's player menu offers a feature. Places the menu offering only that
+        /// feature when the scene has none; switches an existing menu offering only the other
+        /// feature to both; changes nothing when the menu already offers it.
+        /// </summary>
+        private static MenuResult EnsureMenuIncludes(U3DPlayerMenu.Menus feature, out U3DPlayerMenu menu)
+        {
+            menu = FindPlayerMenu();
+
+            if (menu == null)
+            {
+                GameObject instance = CreatePlayerMenu();
+                if (instance == null) return MenuResult.Failed;
+
+                menu = instance.GetComponent<U3DPlayerMenu>();
+                SetMenus(menu, feature);
+                return MenuResult.Created;
+            }
+
+            U3DPlayerMenu.Menus current = menu.ShownMenus;
+            if (current == U3DPlayerMenu.Menus.InventoryAndEmotes || current == feature)
+                return MenuResult.AlreadyIncluded;
+
+            SetMenus(menu, U3DPlayerMenu.Menus.InventoryAndEmotes);
+            return MenuResult.Extended;
+        }
+
+        private static void SetMenus(U3DPlayerMenu menu, U3DPlayerMenu.Menus value)
+        {
+            var so = new SerializedObject(menu);
+            so.FindProperty("menus").intValue = (int)value;
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(menu);
         }
 
         /// <summary>
@@ -190,10 +217,10 @@ namespace U3D.Editor
         /// <summary>
         /// Shared setup for both collectable tools. U3DCollectable requires a NetEntity, so
         /// adding the component brings one along and the ID assigner numbers it. Also adds a
-        /// U3DInventory and the player menu if the scene lacks them, since a collectable does
-        /// nothing without an inventory and players can't see what they collected without the
-        /// menu, and restores the original selection afterwards so the creator stays focused on
-        /// the object they just set up.
+        /// U3DInventory if the scene lacks one and makes sure the player menu offers it, since a
+        /// collectable does nothing without an inventory and touch and VR players can't use what
+        /// they collected without the menu, and restores the original selection afterwards so the
+        /// creator stays focused on the object they just set up.
         /// </summary>
         private static void EnsureCollectable(GameObject selected, U3DCollectable.CollectionMethod method)
         {
@@ -214,11 +241,9 @@ namespace U3D.Editor
                 addedSceneObjects = true;
             }
 
-            if (FindPlayerMenu() == null)
-            {
-                CreatePlayerMenu();
+            MenuResult result = EnsureMenuIncludes(U3DPlayerMenu.Menus.Inventory, out _);
+            if (result == MenuResult.Created || result == MenuResult.Extended)
                 addedSceneObjects = true;
-            }
 
             if (addedSceneObjects)
             {

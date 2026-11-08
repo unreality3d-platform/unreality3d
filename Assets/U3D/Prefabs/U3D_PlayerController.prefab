@@ -294,6 +294,7 @@ GameObject:
   - component: {fileID: 8322012935390943905}
   - component: {fileID: 8532968727575870544}
   - component: {fileID: 7746601038817178350}
+  - component: {fileID: 468536275392645778}
   m_Layer: 3
   m_Name: U3D_PlayerController
   m_TagString: Player
@@ -768,3 +769,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0072a09417860774b8ffd652599e096a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: U3D.Runtime::U3DAvatarSender
+--- !u!114 &468536275392645778
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8488662624428376917}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3dcbeffe1b07af74fb41559e42ab5580, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: U3D.Runtime::U3D.U3DEmote
+  emoteSet: {fileID: 11400000, guid: 9b4deb2756e71874c9389e03c508dd4d, type: 2}
