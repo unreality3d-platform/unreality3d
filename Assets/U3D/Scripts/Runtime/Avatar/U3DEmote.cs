@@ -81,7 +81,7 @@ namespace U3D
 
             AudioClip clip = emoteSet.GetSound(index);
             if (clip != null && _audio != null)
-                _audio.PlayOneShot(clip);
+                _audio.PlayOneShot(clip, emoteSet.Volume);
         }
 
         private bool IsLocalAvatar()
