@@ -14,9 +14,9 @@ namespace U3D.UI
     /// slot shows an item's name, stack count and hotkey and pressing it uses the item exactly as
     /// its hotkey does, and Emotes, where each slot shows an emote and its key and pressing it sends
     /// that emote to everyone in the room. Menus decides which the bar offers. With both, the arrows
-    /// beside the title switch between them, Emotes shows first, and the bar remembers the menu the
-    /// player last chose. Inventory needs a U3DInventory in the scene and Emotes needs the local
-    /// player's U3DEmote; the bar is hidden while the menu it would show has neither.
+    /// either side of the title switch between them, Emotes shows first, and the bar remembers the
+    /// menu the player last chose. Inventory needs a U3DInventory in the scene and Emotes needs the
+    /// local player's U3DEmote; the bar is hidden while the menu it would show has neither.
     ///
     /// The slot keys (the Inventory's hotkeys, or 1 to 0 without an Inventory) act on whichever menu
     /// the bar shows, including while it is collapsed. The bar reads them itself and the Inventory
@@ -64,7 +64,7 @@ namespace U3D.UI
         [SerializeField] private GridLayoutGroup slotGrid;
         [SerializeField] private U3DPlayerMenuSlot[] slots = new U3DPlayerMenuSlot[U3DInventory.SLOT_COUNT];
         [SerializeField] private TextMeshProUGUI titleLabel;
-        [Tooltip("Arrows that switch between Inventory and Emotes. Shown only when the bar offers both.")]
+        [Tooltip("The row holding the title and the arrows that switch between Inventory and Emotes. Its buttons are the arrows, shown only when the bar offers both.")]
         [SerializeField] private GameObject modeArrows;
 
         [Header("Layout (screen points)")]
@@ -87,6 +87,7 @@ namespace U3D.UI
 
         private Canvas _canvas;
         private RectTransform _canvasRect;
+        private Button[] _arrowButtons = new Button[0];
         private U3DInventory _inventory;
         private U3DEmote _emote;
         private bool _emoteBound;
@@ -147,7 +148,9 @@ namespace U3D.UI
 
             if (modeArrows != null)
             {
-                foreach (Button arrow in modeArrows.GetComponentsInChildren<Button>(true))
+                modeArrows.SetActive(true);
+                _arrowButtons = modeArrows.GetComponentsInChildren<Button>(true);
+                foreach (Button arrow in _arrowButtons)
                     arrow.onClick.AddListener(SwitchPage);
             }
 
@@ -406,7 +409,12 @@ namespace U3D.UI
             bool showBar = _open && !(_settingsOpen && CompactLayout);
             if (bar != null) bar.gameObject.SetActive(hasContent && showBar);
             if (collapsedChip != null) collapsedChip.gameObject.SetActive(hasContent && !showBar);
-            if (modeArrows != null) modeArrows.SetActive(InventoryAvailable && EmotesAvailable);
+
+            bool showArrows = InventoryAvailable && EmotesAvailable;
+            foreach (Button arrow in _arrowButtons)
+            {
+                if (arrow != null) arrow.gameObject.SetActive(showArrows);
+            }
         }
 
         /// <summary>EventTrigger target on the title and the collapsed chip.</summary>

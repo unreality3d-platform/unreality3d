@@ -315,32 +315,49 @@ namespace U3D.Editor
             barRect.anchoredPosition = new Vector2(0f, 12f);
 
             VerticalLayoutGroup barLayout = bar.AddComponent<VerticalLayoutGroup>();
-            barLayout.padding = new RectOffset(8, 8, 4, 8);
+            barLayout.padding = new RectOffset(0, 0, 0, 8);
             barLayout.spacing = 4f;
             barLayout.childAlignment = TextAnchor.UpperCenter;
             barLayout.childControlWidth = true;
             barLayout.childControlHeight = true;
-            barLayout.childForceExpandWidth = false;
+            barLayout.childForceExpandWidth = true;
             barLayout.childForceExpandHeight = false;
 
             ContentSizeFitter barFitter = bar.AddComponent<ContentSizeFitter>();
             barFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             barFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            // Header: title (drag or tap to collapse) and the mode arrows
-            GameObject header = new GameObject("Header", typeof(RectTransform));
+            // Header: a second panel layer across the top, holding the Mode row: the left arrow,
+            // the title (drag or tap to collapse) and the right arrow, like the header on the
+            // PayPal panels. The arrows show only when the bar offers both menus.
+            GameObject header = DefaultControls.CreatePanel(uiResources);
+            header.name = "Header";
             header.transform.SetParent(bar.transform, false);
+            U3DUIStyle.ApplyPanelStyle(header);
+            header.GetComponent<Image>().raycastTarget = false;
             HorizontalLayoutGroup headerLayout = header.AddComponent<HorizontalLayoutGroup>();
+            headerLayout.padding = new RectOffset(8, 8, 4, 4);
             headerLayout.childAlignment = TextAnchor.MiddleCenter;
-            headerLayout.spacing = 6f;
             headerLayout.childControlWidth = true;
             headerLayout.childControlHeight = true;
             headerLayout.childForceExpandWidth = false;
             headerLayout.childForceExpandHeight = false;
 
+            GameObject arrows = new GameObject("Mode", typeof(RectTransform));
+            arrows.transform.SetParent(header.transform, false);
+            HorizontalLayoutGroup arrowsLayout = arrows.AddComponent<HorizontalLayoutGroup>();
+            arrowsLayout.childAlignment = TextAnchor.MiddleCenter;
+            arrowsLayout.spacing = 6f;
+            arrowsLayout.childControlWidth = true;
+            arrowsLayout.childControlHeight = true;
+            arrowsLayout.childForceExpandWidth = false;
+            arrowsLayout.childForceExpandHeight = false;
+
+            CreateArrowButton(arrows.transform, "Left", "<", tmpResources);
+
             GameObject title = TMP_DefaultControls.CreateText(tmpResources);
             title.name = "Title";
-            title.transform.SetParent(header.transform, false);
+            title.transform.SetParent(arrows.transform, false);
             TextMeshProUGUI titleTMP = title.GetComponent<TextMeshProUGUI>();
             titleTMP.text = "Inventory";
             U3DUIStyle.ApplyTitleStyle(titleTMP);
@@ -350,22 +367,13 @@ namespace U3D.Editor
             titleLayout.preferredHeight = 24f;
             AddHandleTriggers(title, menu);
 
-            GameObject arrows = new GameObject("Mode Arrows", typeof(RectTransform));
-            arrows.transform.SetParent(header.transform, false);
-            HorizontalLayoutGroup arrowsLayout = arrows.AddComponent<HorizontalLayoutGroup>();
-            arrowsLayout.spacing = 2f;
-            arrowsLayout.childControlWidth = true;
-            arrowsLayout.childControlHeight = true;
-            arrowsLayout.childForceExpandWidth = false;
-            arrowsLayout.childForceExpandHeight = false;
-            CreateArrowButton(arrows.transform, "Up", "^", tmpResources);
-            CreateArrowButton(arrows.transform, "Down", "v", tmpResources);
-            arrows.SetActive(false);
+            CreateArrowButton(arrows.transform, "Right", ">", tmpResources);
 
             // Slots
             GameObject slotsObj = new GameObject("Slots", typeof(RectTransform));
             slotsObj.transform.SetParent(bar.transform, false);
             GridLayoutGroup grid = slotsObj.AddComponent<GridLayoutGroup>();
+            grid.padding = new RectOffset(8, 8, 0, 0);
             grid.cellSize = new Vector2(64f, 64f);
             grid.spacing = new Vector2(4f, 4f);
             grid.childAlignment = TextAnchor.UpperCenter;
@@ -434,10 +442,12 @@ namespace U3D.Editor
             GameObject button = TMP_DefaultControls.CreateButton(tmpResources);
             button.name = "Slot " + (index + 1);
             button.transform.SetParent(parent, false);
-            U3DUIStyle.ApplyButtonStyle(button, string.Empty);
+            U3DUIStyle.ApplySlotStyle(button);
 
             TextMeshProUGUI nameTMP = button.GetComponentInChildren<TextMeshProUGUI>();
             nameTMP.gameObject.name = "Name";
+            nameTMP.text = string.Empty;
+            U3DUIStyle.ApplyButtonTextStyle(nameTMP);
             nameTMP.enableAutoSizing = true;
             nameTMP.fontSizeMin = 8f;
             nameTMP.fontSizeMax = U3DUIStyle.ButtonFontSize;
@@ -488,6 +498,21 @@ namespace U3D.Editor
             button.name = name;
             button.transform.SetParent(parent, false);
             U3DUIStyle.ApplyButtonStyle(button, label);
+
+            Image image = button.GetComponent<Image>();
+            if (image != null) image.color = U3DUIStyle.PanelColor;
+
+            Button buttonComponent = button.GetComponent<Button>();
+            if (buttonComponent != null)
+            {
+                ColorBlock colors = buttonComponent.colors;
+                colors.normalColor = Color.white;
+                buttonComponent.colors = colors;
+            }
+
+            TextMeshProUGUI labelTMP = button.GetComponentInChildren<TextMeshProUGUI>();
+            if (labelTMP != null) labelTMP.fontSize = U3DUIStyle.TitleFontSize;
+
             LayoutElement layout = button.AddComponent<LayoutElement>();
             layout.preferredWidth = 24f;
             layout.preferredHeight = 24f;

@@ -29,6 +29,8 @@ namespace U3D
         [SerializeField] private AudioClip defaultSound;
         [Tooltip("Mixer group emote sounds play through.")]
         [SerializeField] private AudioMixerGroup output;
+        [Tooltip("Volume of emote sounds before the mixer, from 0 to 1. Players still set the overall level with the Effects slider.")]
+        [Range(0f, 1f)][SerializeField] private float volume = 0.5f;
 
         [Header("Swirl")]
         [Tooltip("Particle system played once per emote, around the player. Its sprite is replaced by the emote's.")]
@@ -47,6 +49,7 @@ namespace U3D
 
         public int Count => emotes != null ? emotes.Length : 0;
         public AudioMixerGroup Output => output;
+        public float Volume => volume;
         public ParticleSystem SwirlPrefab => swirlPrefab;
         public float RingRadius => ringRadius;
         public float EmitHeight => emitHeight;

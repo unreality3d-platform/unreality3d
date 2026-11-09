@@ -48,6 +48,9 @@ namespace U3D
         // edges rather than by saturated color, matching U3D's flat aesthetic.
         // -----------------------------──────────────────
 
+        /// <summary>Unity's default panel colour, white at 100/255 alpha, which U3D panels keep. Stacking two gives a stronger band, like a panel header.</summary>
+        public static readonly Color32 PanelColor = new Color32(255, 255, 255, 100);
+
         /// <summary>Slightly off-white tint for buttons, slider knobs, and scrollbar thumbs — the "draggable/clickable" surface tier. Matches across all interactive controls for consistent visual language.</summary>
         public static readonly Color32 ButtonNormalColor = new Color32(240, 240, 240, 255);
 
@@ -174,6 +177,33 @@ namespace U3D
                 if (label != null)
                     buttonText.text = label;
                 ApplyButtonTextStyle(buttonText);
+            }
+        }
+
+        /// <summary>
+        /// Apply the U3D slot style to a button that holds something, like a player menu slot.
+        /// A slot is a container, so it takes the inset surface tier rather than the button tier:
+        /// the sprite is stripped, the Image is tinted InsetSurfaceColor, and the Button's
+        /// normalColor is white so the tint is not darkened further. Hover and pressed states stay
+        /// at Unity's defaults and multiply from the inset colour, so a press still shows.
+        /// Labels are not touched. Safe at runtime.
+        /// </summary>
+        public static void ApplySlotStyle(GameObject slot)
+        {
+            if (slot == null) return;
+
+            StripSprite(slot);
+
+            var image = slot.GetComponent<Image>();
+            if (image != null)
+                image.color = InsetSurfaceColor;
+
+            var buttonComponent = slot.GetComponent<Button>();
+            if (buttonComponent != null)
+            {
+                var colors = buttonComponent.colors;
+                colors.normalColor = Color.white;
+                buttonComponent.colors = colors;
             }
         }
 
