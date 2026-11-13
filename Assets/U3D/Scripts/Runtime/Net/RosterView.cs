@@ -13,6 +13,7 @@ namespace U3D.Net
         public int blockIndex;
         public string uid;
         public long joinedAt;
+        public bool named;
     }
 
     /// <summary>
@@ -31,6 +32,13 @@ namespace U3D.Net
     {
         public long JoinedAt;
         public string Uid;
+
+        /// <summary>
+        /// Whether this player is signed in and has accepted the guidelines. The database
+        /// rules refuse a record claiming it otherwise, so it can be trusted without asking
+        /// the player. Absent in the record reads as false.
+        /// </summary>
+        public bool Named;
     }
 
     /// <summary>
@@ -70,7 +78,8 @@ namespace U3D.Net
                     // A record with no server time cannot be ordered against one that has
                     // it, so it sorts last rather than winning the role by holding zero.
                     JoinedAt = slot.joinedAt > 0 ? slot.joinedAt : long.MaxValue,
-                    Uid = slot.uid
+                    Uid = slot.uid,
+                    Named = slot.named
                 };
             }
         }
