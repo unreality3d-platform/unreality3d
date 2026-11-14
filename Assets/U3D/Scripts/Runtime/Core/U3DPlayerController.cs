@@ -317,7 +317,11 @@ public class U3DPlayerController : MonoBehaviour
             ApplyDisplayNameFromProfile(FirebaseIntegration.LocalProfile);
 
         if (Net.Session != null)
+        {
             Net.Session.PeerReachable += HandlePeerReachable;
+            Net.Session.SignedInDisplayNameChanged += HandleSignedInDisplayNameChanged;
+            ApplyDisplayName(Net.Session.SignedInDisplayName);
+        }
     }
 
     void OnDestroy()
@@ -326,6 +330,8 @@ public class U3DPlayerController : MonoBehaviour
 
         if (Net.Session != null)
             Net.Session.PeerReachable -= HandlePeerReachable;
+
+        if (Net.Session != null) Net.Session.SignedInDisplayNameChanged -= HandleSignedInDisplayNameChanged;
 
         if (_webXRManager != null)
             _webXRManager.UnregisterLocalPlayer(this);
@@ -1643,16 +1649,33 @@ public class U3DPlayerController : MonoBehaviour
 
     // Empty or null names return early, leaving DisplayName empty rather than writing a
     // placeholder. The nametag decides what an unnamed player looks like.
+    // The multiplayer session's name wins when there is one: it comes from the sign-in the
+    // room trusts, which does not expire with the site's login cookie.
     private void ApplyDisplayNameFromProfile(FirebaseIntegration.UserInfo profile)
     {
+        if (!string.IsNullOrEmpty(Net.Session?.SignedInDisplayName)) return;
         if (profile == null) return;
-        if (string.IsNullOrEmpty(profile.displayName)) return;
-        string chosenName = profile.displayName;
+
+        ApplyDisplayName(profile.displayName);
+    }
+
+    private void ApplyDisplayName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+
+        string chosenName = name;
         if (chosenName.Length > DISPLAY_NAME_MAX_LENGTH)
             chosenName = chosenName.Substring(0, DISPLAY_NAME_MAX_LENGTH);
         DisplayName = chosenName;
 
         Net.Session?.PublishDisplayName(DisplayName, PeerId.None);
+    }
+
+    // The session learns the signed-in name during sign-in, which can finish before or after
+    // this player starts, so both moments apply it.
+    private void HandleSignedInDisplayNameChanged(string name)
+    {
+        ApplyDisplayName(name);
     }
 
     /// <summary>

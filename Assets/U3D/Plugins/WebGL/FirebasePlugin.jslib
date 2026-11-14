@@ -270,11 +270,22 @@ mergeInto(LibraryManager.library, {
             }
         };
 
+        var reportName = function (name) {
+            if (!name) return;
+            if (typeof window.unityInstance !== 'undefined' && window.unityInstance) {
+                window.unityInstance.SendMessage(gameObjectName, 'OnNetProfileName', name);
+            }
+        };
+
         var state = window.U3DNet = window.U3DNet || {};
 
         var deliver = function (promise) {
-            promise.then(function (uid) {
-                report({ ok: true, uid: uid });
+            promise.then(function (result) {
+                report({ ok: true, uid: result.uid, signedIn: result.signedIn });
+
+                // The name follows separately, whenever it arrives, so joining the room
+                // never waits on it.
+                if (state.profileName) state.profileName.then(reportName);
             }).catch(function (e) {
                 state.signIn = null;
                 report({ ok: false, message: String(e && e.message ? e.message : e) });
@@ -297,6 +308,90 @@ mergeInto(LibraryManager.library, {
         var base = 'https://www.gstatic.com/firebasejs/' + config.sdkVersion + '/';
         state.base = base;
 
+        // The site keeps its sign-in in this browser for unreality3d.com alone, so on any
+        // other address, a GitHub Pages one included, there is nothing to find.
+        var onSite = window.location.hostname === 'unreality3d.com';
+
+        // A second named app, never the default, so portal auth in this same document is
+        // untouched. Persistence is a creation argument rather than a later write.
+        var signInAnonymously = function (appMod, authMod) {
+            state.app = appMod.initializeApp(config.firebase, 'u3d-net');
+            state.auth = authMod.initializeAuth(state.app, {
+                persistence: authMod.inMemoryPersistence
+            });
+            state.signedIn = false;
+            state.named = false;
+            state.profileName = null;
+
+            return authMod.signInAnonymously(state.auth).then(function (credential) {
+                return { uid: credential.user.uid, signedIn: false };
+            });
+        };
+
+        // The profile name, or an empty string on any failure.
+        var readProfileName = function (siteApp, uid) {
+            return import(base + 'firebase-firestore.js').then(function (fsMod) {
+                return fsMod.getDoc(fsMod.doc(fsMod.getFirestore(siteApp), 'users', uid));
+            }).then(function (snapshot) {
+                var data = snapshot.exists() ? snapshot.data() : null;
+                var profile = data ? data.profile : null;
+                return profile && typeof profile.displayName === 'string' ? profile.displayName : '';
+            }).catch(function () {
+                return '';
+            });
+        };
+
+        // Reads the session the site saved in this browser. Only reads: nothing here signs
+        // in, signs out or changes how the session is stored, because this is the same
+        // session the site's own pages use. Resolves null when there is no signed-in user.
+        var useSiteSession = function (appMod, authMod) {
+            var siteApp;
+            try {
+                siteApp = appMod.getApp();
+            } catch (e) {
+                siteApp = appMod.initializeApp(config.firebase);
+            }
+
+            var siteAuth;
+            try {
+                // IndexedDB alone, and no popup or redirect handler, so creating this does
+                // not load the sign-in frame or touch a pending sign-in on the site.
+                siteAuth = authMod.initializeAuth(siteApp, {
+                    persistence: authMod.indexedDBLocalPersistence
+                });
+            } catch (e) {
+                siteAuth = authMod.getAuth(siteApp);
+            }
+
+            return new Promise(function (resolve) {
+                var settled = false;
+                var off = null;
+
+                off = authMod.onAuthStateChanged(siteAuth, function (user) {
+                    if (settled) return;
+                    settled = true;
+                    if (off) off();
+                    resolve(user);
+                });
+
+                if (settled && off) off();
+            }).then(function (user) {
+                if (!user || user.isAnonymous) return null;
+
+                return user.getIdTokenResult().then(function (token) {
+                    state.app = siteApp;
+                    state.auth = siteAuth;
+                    state.signedIn = true;
+                    state.named = token.claims.social === true && token.signInProvider !== 'anonymous';
+
+                    // Started now and left running.
+                    state.profileName = readProfileName(siteApp, user.uid);
+
+                    return { uid: user.uid, signedIn: true };
+                });
+            });
+        };
+
         state.signIn = Promise.all([
             import(base + 'firebase-app.js'),
             import(base + 'firebase-auth.js')
@@ -304,16 +399,15 @@ mergeInto(LibraryManager.library, {
             var appMod = mods[0];
             var authMod = mods[1];
 
-            // A second named app, never the default, so portal auth in this same document
-            // is untouched. Persistence is a creation argument rather than a later write.
-            state.app = appMod.initializeApp(config.firebase, 'u3d-net');
-            state.auth = authMod.initializeAuth(state.app, {
-                persistence: authMod.inMemoryPersistence
-            });
+            if (!onSite) return signInAnonymously(appMod, authMod);
 
-            return authMod.signInAnonymously(state.auth);
-        }).then(function (credential) {
-            return credential.user.uid;
+            // Anything going wrong with the site session leaves the visitor joining
+            // anonymously, exactly as they would have before, rather than not at all.
+            return useSiteSession(appMod, authMod).catch(function () {
+                return null;
+            }).then(function (result) {
+                return result || signInAnonymously(appMod, authMod);
+            });
         });
 
         deliver(state.signIn);
@@ -349,6 +443,26 @@ mergeInto(LibraryManager.library, {
 
             var blocksRef = dbMod.ref(state.database, roomPath + '/blocks');
 
+            // A signed-in visitor keeps their user ID across reloads, so an item left in
+            // this block's mailbox for an earlier visit names them and would pass the
+            // recipient check that discards everything else left over. An anonymous visitor
+            // gets a new ID every load and needs none of this. One write, each item deleted
+            // under the rule that lets a block's holder clear its own mailbox. A fresh offer
+            // from someone joining this same instant can be deleted with them; its sender
+            // re-sends it.
+            var clearMailbox = function (pick) {
+                if (!state.signedIn) return Promise.resolve();
+
+                var empty = {};
+                for (var j = 0; j < blockCount; j++) {
+                    if (j !== pick) empty[j] = null;
+                }
+
+                return dbMod.update(dbMod.ref(state.database, roomPath + '/signals/' + pick), empty).catch(function (e) {
+                    console.warn('The connection mailbox could not be cleared:', e);
+                });
+            };
+
             return dbMod.get(blocksRef).then(function (snapshot) {
                 var taken = snapshot.exists() ? snapshot.val() : null;
                 var free = [];
@@ -375,7 +489,10 @@ mergeInto(LibraryManager.library, {
                     // back as an occupied slot.
                     dbMod.runTransaction(slotRef, function (current) {
                         if (current !== null) return;
-                        return { uid: uid, joinedAt: dbMod.serverTimestamp() };
+
+                        var record = { uid: uid, joinedAt: dbMod.serverTimestamp() };
+                        if (state.named) record.named = true;
+                        return record;
                     }, { applyLocally: false }).then(function (result) {
                         if (!result.committed) {
                             attempt();
@@ -386,10 +503,25 @@ mergeInto(LibraryManager.library, {
                         // removal of anyone else's. This is what frees the slot when the tab
                         // closes or the browser crashes.
                         return dbMod.onDisconnect(slotRef).remove().then(function () {
+                            return clearMailbox(pick);
+                        }).then(function () {
                             state.slotRef = slotRef;
                             state.blockIndex = pick;
                             report({ ok: true, blockIndex: pick });
                         });
+                    }, function (e) {
+                        // The rules refused the record. The one field they can refuse for a
+                        // signed-in visitor is named, which means the token and the server
+                        // disagree about the guidelines; joining without it beats not
+                        // joining at all.
+                        if (state.named) {
+                            state.named = false;
+                            free.push(pick);
+                            attempt();
+                            return;
+                        }
+
+                        throw e;
                     }).catch(function (e) {
                         report({ ok: false, message: String(e && e.message ? e.message : e) });
                     });
@@ -450,7 +582,8 @@ mergeInto(LibraryManager.library, {
                         slots.push({
                             blockIndex: index,
                             uid: record.uid ? String(record.uid) : '',
-                            joinedAt: typeof record.joinedAt === 'number' ? record.joinedAt : 0
+                            joinedAt: typeof record.joinedAt === 'number' ? record.joinedAt : 0,
+                            named: record.named === true
                         });
                     }
                 }

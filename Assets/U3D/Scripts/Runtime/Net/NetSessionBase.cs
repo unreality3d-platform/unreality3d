@@ -66,6 +66,24 @@ namespace U3D.Net
         public IReadOnlyList<PeerId> Peers => _peers;
         public bool IsConnected => _isConnected;
 
+
+        /// <summary>
+        /// Loopback has no roster and no sign-in, so nobody is named in the editor. The
+        /// roster backend overrides this with what each player's record says.
+        /// </summary>
+        public virtual bool IsNamed(PeerId peer) => false;
+
+        public bool LocalIsNamed => IsNamed(_localPeer);
+
+        public virtual string SignedInDisplayName => null;
+
+        public event Action<string> SignedInDisplayNameChanged;
+
+        protected void RaiseSignedInDisplayNameChanged(string name)
+        {
+            SignedInDisplayNameChanged?.Invoke(name);
+        }
+
         public event Action<PeerId> PeerJoined;
         public event Action<PeerId> PeerLeft;
         public event Action<PeerId> ReporterChanged;

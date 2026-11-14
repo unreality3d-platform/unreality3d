@@ -74,6 +74,7 @@ namespace U3D.Net
         {
             public bool ok;
             public string uid;
+            public bool signedIn;
             public string message;
         }
 
@@ -150,9 +151,22 @@ namespace U3D.Net
         private readonly int[] _receiveSender = new int[1];
         private PeerLinks _links;
         private Coroutine _linkPump;
+        private string _signedInDisplayName;
 
-        /// <summary>The anonymous user ID this tab signed in as, or null before sign-in.</summary>
+        /// <summary>
+        /// The user ID this tab signed in as, or null before sign-in. A visitor signed in
+        /// on the site keeps the same ID across reloads and tabs; an anonymous one gets a
+        /// new ID every load.
+        /// </summary>
         public string Uid { get; private set; }
+
+        /// <summary>
+        /// Whether the multiplayer sign-in used the visitor's site session rather than an
+        /// anonymous one.
+        /// </summary>
+        public bool SignedIn { get; private set; }
+
+        public override string SignedInDisplayName => _signedInDisplayName;
 
         /// <summary>The block this peer holds in the room, or -1 when running alone.</summary>
         public int BlockIndex { get; private set; } = -1;
@@ -168,6 +182,21 @@ namespace U3D.Net
             }
 
             ClaimLocator();
+        }
+
+        /// <summary>
+        /// Read from the player's record in the room rather than from anything the player
+        /// says, because the database rules are what stand behind the record. A record
+        /// rewritten with the flag later reaches every peer at the next roster delivery.
+        /// </summary>
+        public override bool IsNamed(PeerId peer)
+        {
+            if (!_rosterOpen || !peer.IsValid) return false;
+
+            int block = peer.BlockIndex;
+            if (block < 0) return false;
+
+            return _records.TryGetValue(block, out RosterRecord record) && record.Named;
         }
 
         public override async Task<JoinResult> Connect(string sessionName)
@@ -190,6 +219,7 @@ namespace U3D.Net
             }
 
             Uid = signIn.uid;
+            SignedIn = signIn.signedIn;
 
             ConfigureIce();
 
@@ -339,6 +369,19 @@ namespace U3D.Net
             }
 
             CompleteSignIn(reply);
+        }
+
+        /// <summary>
+        /// Called by the browser through SendMessage when the signed-in profile name has
+        /// been read, separately from sign-in so joining never waits on it. Not called from
+        /// C#.
+        /// </summary>
+        public void OnNetProfileName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+
+            _signedInDisplayName = name;
+            RaiseSignedInDisplayNameChanged(name);
         }
 
         private void CompleteSignIn(SignInReply reply)

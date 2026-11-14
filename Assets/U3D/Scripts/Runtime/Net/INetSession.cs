@@ -74,5 +74,28 @@ namespace U3D.Net
         /// resolves, and on PeerReachable to tell a newcomer what this player is called.
         /// </summary>
         void PublishDisplayName(string name, PeerId target);
+
+        /// <summary>
+        /// Whether a player is signed in and has accepted the guidelines, as their record
+        /// in the room says. The database rules refuse a record claiming it otherwise, so
+        /// this is safe to gate text and voice on. False for anyone not in the room, and
+        /// always false in the editor.
+        /// </summary>
+        bool IsNamed(PeerId peer);
+
+        /// <summary>IsNamed for this player.</summary>
+        bool LocalIsNamed { get; }
+
+        /// <summary>
+        /// This player's profile name when the multiplayer sign-in used their site
+        /// session, or null when it did not or the name could not be read.
+        /// </summary>
+        string SignedInDisplayName { get; }
+
+        /// <summary>
+        /// Raised when the signed-in profile name arrives, which can be before or after the
+        /// room is joined. Not raised for anonymous visitors.
+        /// </summary>
+        event Action<string> SignedInDisplayNameChanged;
     }
 }
