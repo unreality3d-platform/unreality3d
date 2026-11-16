@@ -31,6 +31,8 @@ namespace U3D.Editor
                 new CreatorTool("🟢 Add Worldspace UI", "World space canvas with proximity fade and billboard behavior options", CreateWorldspaceUI),
                 new CreatorTool("🟢 Make URL Link", "Click to open a URL in a new browser tab. Adds an Interact Trigger wired to open the link.", ApplyURLLink, true),
                 new CreatorTool("🟢 Add Video Player", "Stream a video from a URL onto a screen in your world. After placing, select the Video Screen child object and paste a direct .mp4 or .webm link into the Video URL field.", CreateVideoPlayer),
+                new CreatorTool("🟢 Add Audio Player", "Audio with playback controls visitors can use: play/pause, a progress bar, and the track title and time. After placing, select the Audio Player and add tracks: an audio clip, or a direct .mp3, .ogg or .wav link that streams so long audio stays out of your build. Scale the Audio Player to resize the controls.", CreateAudioPlayer),
+                new CreatorTool("🟢 Make Audio Player", "Adds an Audio Player to the selected object, with its controls sized to the object and placed just above it. Add tracks on the Audio Player in the Inspector.", MakeAudioPlayer, true),
                 new CreatorTool("🟢 Add Mirror", "Reflective surface for vanity mirrors, avatar viewing, or scene composition. Each mirror creates its own render texture asset in Assets/U3D/U3D_Assets/Mirrors/.", CreateMirror),
                 new CreatorTool("🟢 Add Instructions", "Worldspace UI showing default movement and control patterns with all current input bindings. Updates automatically if you remap controls.", CreateMovementInstructions),
                 new CreatorTool("🟢 Add Touch Controls", "Move and Look circles in the bottom corners of the screen, shown only on phones and tablets so visitors know where to put their thumbs. Touches pass straight through to the touch controls. Swap in your own circle art on the Move Hint and Look Hint images.", CreateTouchControlHints),
@@ -380,6 +382,265 @@ namespace U3D.Editor
             Selection.activeGameObject = root;
             EditorGUIUtility.PingObject(root);
             EditorUtility.SetDirty(root);
+        }
+
+        // -----------------------------──────────────────
+        // Audio Player
+        // -----------------------------──────────────────
+
+        private const float AUDIO_CONTROLS_WIDTH = 300f;
+        private const float AUDIO_CONTROLS_HEIGHT = 40f;
+        private const float AUDIO_PLAYER_DEFAULT_WIDTH = 0.9f;
+        private const float AUDIO_PLAYER_MIN_WIDTH = 0.15f;
+        private const float AUDIO_PLAYER_MAX_WIDTH = 1.8f;
+        private const float AUDIO_PLAYER_GAP_ABOVE_OBJECT = 0.05f;
+
+        private static void CreateAudioPlayer()
+        {
+            AudioMixerGroup voiceGroup = FindMixerGroup("Voice");
+            if (voiceGroup == null) return;
+
+            GameObject root = new GameObject("Audio Player");
+            PositionInScene(root);
+
+            U3DAudioPlayer player = AddAudioPlayerComponent(root, voiceGroup);
+
+            GameObject canvasObj = BuildAudioControls(root.transform, player);
+            canvasObj.transform.localPosition = Vector3.zero;
+            canvasObj.transform.localRotation = Quaternion.identity;
+            canvasObj.transform.localScale = Vector3.one * (AUDIO_PLAYER_DEFAULT_WIDTH / AUDIO_CONTROLS_WIDTH);
+
+            Undo.RegisterCreatedObjectUndo(root, "Add Audio Player");
+
+            Selection.activeGameObject = root;
+            EditorGUIUtility.PingObject(root);
+            EditorUtility.SetDirty(root);
+        }
+
+        private static void MakeAudioPlayer()
+        {
+            GameObject selected = Selection.activeGameObject;
+            if (selected == null) return;
+
+            if (selected.GetComponentInChildren<U3DAudioPlayer>(true) != null)
+            {
+                EditorUtility.DisplayDialog("Audio Player",
+                    "This object or one of its children already has an Audio Player.",
+                    "OK");
+                EditorGUIUtility.PingObject(selected);
+                return;
+            }
+
+            AudioMixerGroup voiceGroup = FindMixerGroup("Voice");
+            if (voiceGroup == null) return;
+
+            bool hasBounds = TryGetWorldBounds(selected, out Bounds bounds);
+            float width = hasBounds
+                ? Mathf.Clamp(Mathf.Max(bounds.size.x, bounds.size.z), AUDIO_PLAYER_MIN_WIDTH, AUDIO_PLAYER_MAX_WIDTH)
+                : AUDIO_PLAYER_DEFAULT_WIDTH;
+            float height = width * AUDIO_CONTROLS_HEIGHT / AUDIO_CONTROLS_WIDTH;
+            Vector3 center = hasBounds ? bounds.center : selected.transform.position;
+            float top = hasBounds ? bounds.max.y : selected.transform.position.y;
+            Vector3 barPosition = new Vector3(center.x, top + AUDIO_PLAYER_GAP_ABOVE_OBJECT + height * 0.5f, center.z);
+
+            GameObject host = selected;
+            GameObject createdHost = null;
+            if (selected.GetComponent<AudioSource>() != null)
+            {
+                createdHost = new GameObject("Audio Player");
+                createdHost.transform.SetParent(selected.transform, false);
+                host = createdHost;
+            }
+            else
+            {
+                Undo.RegisterCompleteObjectUndo(selected, "Make Audio Player");
+            }
+
+            U3DAudioPlayer player = AddAudioPlayerComponent(host, voiceGroup);
+
+            GameObject canvasObj = BuildAudioControls(host.transform, player);
+            canvasObj.transform.position = barPosition;
+            canvasObj.transform.rotation = Quaternion.Euler(0f, selected.transform.eulerAngles.y, 0f);
+            SetWorldScale(canvasObj.transform, width / AUDIO_CONTROLS_WIDTH);
+
+            if (createdHost != null)
+                Undo.RegisterCreatedObjectUndo(createdHost, "Make Audio Player");
+            else
+                Undo.RegisterCreatedObjectUndo(canvasObj, "Make Audio Player");
+
+            Selection.activeGameObject = host;
+            EditorGUIUtility.PingObject(host);
+            EditorUtility.SetDirty(host);
+        }
+
+        private static U3DAudioPlayer AddAudioPlayerComponent(GameObject target, AudioMixerGroup group)
+        {
+            U3DAudioPlayer player = Undo.AddComponent<U3DAudioPlayer>(target);
+
+            AudioSource source = target.GetComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.loop = false;
+            source.spatialBlend = 0f;
+            source.outputAudioMixerGroup = group;
+            source.hideFlags = HideFlags.HideInInspector;
+
+            SerializedObject so = new SerializedObject(player);
+            so.FindProperty("mixer").objectReferenceValue = group.audioMixer;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            return player;
+        }
+
+        private static GameObject BuildAudioControls(Transform parent, U3DAudioPlayer player)
+        {
+            int uiLayer = LayerMask.NameToLayer("UI");
+            var uiResources = new DefaultControls.Resources();
+            var tmpResources = new TMP_DefaultControls.Resources();
+
+            GameObject canvasObj = new GameObject("Audio Controls Canvas");
+            canvasObj.transform.SetParent(parent, false);
+
+            Canvas canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+
+            canvasObj.AddComponent<CanvasGroup>();
+            canvasObj.AddComponent<GraphicRaycaster>();
+
+            U3DWorldspaceUI worldspaceUI = canvasObj.AddComponent<U3DWorldspaceUI>();
+            worldspaceUI.faceCamera = false;
+            worldspaceUI.hideDistance = 8f;
+            worldspaceUI.showDistance = 1f;
+
+            RectTransform canvasRect = canvasObj.GetComponent<RectTransform>();
+            canvasRect.sizeDelta = new Vector2(AUDIO_CONTROLS_WIDTH, AUDIO_CONTROLS_HEIGHT);
+
+            GameObject panelObj = DefaultControls.CreatePanel(uiResources);
+            panelObj.name = "Controls Panel";
+            panelObj.transform.SetParent(canvasObj.transform, false);
+
+            RectTransform panelRect = panelObj.GetComponent<RectTransform>();
+            panelRect.anchorMin = Vector2.zero;
+            panelRect.anchorMax = Vector2.one;
+            panelRect.offsetMin = Vector2.zero;
+            panelRect.offsetMax = Vector2.zero;
+
+            U3DUIStyle.ApplyPanelStyle(panelObj);
+
+            Image panelImage = panelObj.GetComponent<Image>();
+            if (panelImage != null)
+                panelImage.color = new Color(1f, 1f, 1f, 0.95f);
+
+            GameObject buttonObj = TMP_DefaultControls.CreateButton(tmpResources);
+            buttonObj.name = "PlayPause Button";
+            buttonObj.transform.SetParent(panelObj.transform, false);
+
+            RectTransform buttonRect = buttonObj.GetComponent<RectTransform>();
+            buttonRect.anchorMin = new Vector2(0.02f, 0.1f);
+            buttonRect.anchorMax = new Vector2(0.18f, 0.9f);
+            buttonRect.offsetMin = Vector2.zero;
+            buttonRect.offsetMax = Vector2.zero;
+
+            U3DUIStyle.ApplyButtonStyle(buttonObj, "Play");
+            TextMeshProUGUI buttonTMP = buttonObj.GetComponentInChildren<TextMeshProUGUI>();
+
+            Button button = buttonObj.GetComponent<Button>();
+            Navigation buttonNavigation = button.navigation;
+            buttonNavigation.mode = Navigation.Mode.None;
+            button.navigation = buttonNavigation;
+
+            GameObject sliderObj = DefaultControls.CreateSlider(uiResources);
+            sliderObj.name = "Progress Slider";
+            sliderObj.transform.SetParent(panelObj.transform, false);
+
+            RectTransform sliderRect = sliderObj.GetComponent<RectTransform>();
+            sliderRect.anchorMin = new Vector2(0.20f, 0.1f);
+            sliderRect.anchorMax = new Vector2(0.68f, 0.9f);
+            sliderRect.offsetMin = Vector2.zero;
+            sliderRect.offsetMax = Vector2.zero;
+
+            Slider slider = sliderObj.GetComponent<Slider>();
+            slider.minValue = 0f;
+            slider.maxValue = 1f;
+            slider.value = 0f;
+
+            Navigation sliderNavigation = slider.navigation;
+            sliderNavigation.mode = Navigation.Mode.None;
+            slider.navigation = sliderNavigation;
+
+            U3DUIStyle.ApplySliderStyle(sliderObj, new Color(0.4f, 0.6f, 1f, 1f));
+            RectTransform handleSlideArea = sliderObj.transform.Find("Handle Slide Area")?.GetComponent<RectTransform>();
+            if (handleSlideArea != null)
+            {
+                handleSlideArea.offsetMin = new Vector2(20f, 6f);
+                handleSlideArea.offsetMax = new Vector2(-20f, -6f);
+            }
+
+            GameObject timeObj = TMP_DefaultControls.CreateText(tmpResources);
+            timeObj.name = "Time Display";
+            timeObj.transform.SetParent(panelObj.transform, false);
+
+            RectTransform timeRect = timeObj.GetComponent<RectTransform>();
+            timeRect.anchorMin = new Vector2(0.70f, 0.05f);
+            timeRect.anchorMax = new Vector2(0.98f, 0.95f);
+            timeRect.offsetMin = Vector2.zero;
+            timeRect.offsetMax = Vector2.zero;
+
+            TextMeshProUGUI timeTMP = timeObj.GetComponent<TextMeshProUGUI>();
+            if (timeTMP != null)
+            {
+                timeTMP.text = "0:00 / 0:00";
+                U3DUIStyle.ApplyStatusStyle(timeTMP);
+                timeTMP.raycastTarget = false;
+                timeTMP.textWrappingMode = TextWrappingModes.NoWrap;
+                timeTMP.overflowMode = TextOverflowModes.Ellipsis;
+            }
+
+            foreach (Transform t in canvasObj.GetComponentsInChildren<Transform>(true))
+                t.gameObject.layer = uiLayer;
+
+            player.playPauseButton = button;
+            player.progressSlider = slider;
+            player.timeDisplay = timeTMP;
+            player.playPauseButtonText = buttonTMP;
+            EditorUtility.SetDirty(player);
+
+            return canvasObj;
+        }
+
+        private static bool TryGetWorldBounds(GameObject target, out Bounds bounds)
+        {
+            bounds = default;
+            bool found = false;
+
+            foreach (Renderer r in target.GetComponentsInChildren<Renderer>())
+            {
+                if (!r.enabled) continue;
+                if (!found) { bounds = r.bounds; found = true; }
+                else bounds.Encapsulate(r.bounds);
+            }
+
+            foreach (Collider c in target.GetComponentsInChildren<Collider>())
+            {
+                if (!c.enabled) continue;
+                if (!found) { bounds = c.bounds; found = true; }
+                else bounds.Encapsulate(c.bounds);
+            }
+
+            return found;
+        }
+
+        private static void SetWorldScale(Transform t, float uniformScale)
+        {
+            Vector3 parentScale = t.parent != null ? t.parent.lossyScale : Vector3.one;
+            t.localScale = new Vector3(
+                SafeDivide(uniformScale, parentScale.x),
+                SafeDivide(uniformScale, parentScale.y),
+                SafeDivide(uniformScale, parentScale.z));
+        }
+
+        private static float SafeDivide(float value, float divisor)
+        {
+            return Mathf.Abs(divisor) > 1e-6f ? value / divisor : value;
         }
 
         // -----------------------------──────────────────
