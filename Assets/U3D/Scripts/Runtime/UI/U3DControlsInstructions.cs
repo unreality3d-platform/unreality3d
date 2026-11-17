@@ -110,11 +110,12 @@ namespace U3D
             bool showAutoRun = playerController == null || playerController.EnableAutoRun;
             bool showTeleport = playerController == null || playerController.EnableTeleport;
             bool showZoom = playerController == null || playerController.EnableViewZoom;
-            bool showAdvancedCam = playerController == null || playerController.EnableAdvancedCamera;
+            bool showCameraDistance = playerController == null || playerController.EnableScrollCameraDistance;
 
             // BASIC MOVEMENT
             var basicLines = new List<string>();
-            if (showMovement) basicLines.Add("Walk: W A S D  or  Arrow Keys");
+            if (showMovement) basicLines.Add("Walk: W / S  or  Up / Down");
+            if (showMovement) basicLines.Add("Turn: A / D");
             if (showMovement && showSprint) basicLines.Add("Run: Shift (toggle)");
             if (showMovement && showJump) basicLines.Add("Jump: Space");
             if (showMovement && showCrouch) basicLines.Add("Crouch: C");
@@ -134,7 +135,8 @@ namespace U3D
             cameraLines.Add("Remove: X");
             cameraLines.Add("Free Cursor (stay in game): Tab");
             cameraLines.Add("Free Cursor (return to browser): Esc");
-            if (showZoom) cameraLines.Add("Zoom: Mouse Wheel");
+            if (showCameraDistance) cameraLines.Add("Camera Distance: Mouse Wheel");
+            if (showZoom) cameraLines.Add("Zoom: Middle Mouse (hold)");
 
             sb.AppendLine("<b>CAMERA + UI</b>");
             sb.AppendLine(SectionRule);
@@ -144,9 +146,9 @@ namespace U3D
             // SPECIAL MOVEMENT
             var specialLines = new List<string>();
             if (showFly) specialLines.Add("Fly: F (toggle)");
-            if (showMovement) specialLines.Add("Strafe: Q / E");
-            if (showAdvancedCam && showMovement) specialLines.Add("Move Forward: Left + Right Mouse");
-            if (showAdvancedCam && showMovement) specialLines.Add("Steer: Left + Right Mouse + Move Mouse");
+            if (showMovement) specialLines.Add("Strafe: Q / E  or  Left / Right");
+            if (showMovement) specialLines.Add("Move Forward: Left + Right Mouse");
+            if (showMovement) specialLines.Add("Steer: Left + Right Mouse + Move Mouse");
             if (showAutoRun && showMovement) specialLines.Add("Auto-Run: Num Lock (toggle)");
             if (showTeleport) specialLines.Add("Teleport: Double-Click");
 
@@ -189,6 +191,7 @@ namespace U3D
                     case "AutoRunToggle": return playerController.EnableAutoRun;
                     case "Teleport": return playerController.EnableTeleport;
                     case "Zoom": return playerController.EnableViewZoom;
+                    case "PerspectiveSwitch": return playerController.EnableScrollCameraDistance;
                     case "Move":
                     case "StrafeLeft":
                     case "StrafeRight":
@@ -263,7 +266,7 @@ namespace U3D
             {
                 case "Pause": return "Free Cursor (stay in game)";
                 case "Escape": return "Free Cursor (return to browser)";
-                case "PerspectiveSwitch": return "Camera Perspective";
+                case "PerspectiveSwitch": return "Camera Distance";
                 case "AutoRunToggle": return "Auto-Run";
                 case "MouseLeft": return "Primary Click";
                 case "MouseRight": return "Camera Look (hold)";
