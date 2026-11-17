@@ -22,9 +22,7 @@ public class U3DPlayerController : MonoBehaviour
     [Header("Perspective Control")]
     [SerializeField] private PerspectiveMode perspectiveMode = PerspectiveMode.SmoothScroll;
 
-    [HideInInspector][SerializeField] private float perspectiveTransitionSpeed = 8f;
     [HideInInspector][SerializeField] private bool enableCameraCollision = true;
-    [HideInInspector][SerializeField] private bool enableSmoothTransitions = true;
 
     [Header("Mouse Sensitivity Settings")]
     [SerializeField] private float baseMouseSensitivity = 1.0f;
@@ -45,8 +43,8 @@ public class U3DPlayerController : MonoBehaviour
     [HideInInspector][SerializeField] private float cameraCollisionRadius = 0.2f;
     [HideInInspector][SerializeField] private float cameraCollisionBuffer = 0.1f;
 
-    [Header("AAA Camera System")]
-    [SerializeField] private bool enableAdvancedCamera = true;
+    [Header("Keyboard Turning")]
+    [Tooltip("How fast the turn keys (A and D) rotate the player, in degrees per second.")]
     [SerializeField] private float characterTurnSpeed = 90f;
 
     [Header("Mouse Look Behavior")]
@@ -56,11 +54,20 @@ public class U3DPlayerController : MonoBehaviour
     [Tooltip("How high the camera sits in third-person view, in player-root-local space. First-person height comes from the Camera child's Y position in the prefab. Set this to match the prefab Camera child's Y if you want consistent height across the perspective switch, or set it lower for an over-the-shoulder feel.")]
     [SerializeField] private float thirdPersonCameraHeight = 1.65f;
 
-    [Tooltip("How far behind the player the third-person camera sits.")]
+    [Tooltip("How far behind the player the third-person camera sits at its farthest, in metres. In SmoothScroll mode this is the zoom-out limit. In ThirdPersonOnly mode the camera stays at this distance.")]
     [SerializeField] private float thirdPersonCameraDistance = 5f;
 
-    [Tooltip("How long, in seconds, the camera takes to transition between first and third person when using SmoothScroll perspective mode.")]
-    [SerializeField] private float transitionTime = 1.5f;
+    [Tooltip("The closest the third-person camera comes, in metres. One more scroll step in from here switches to first person. Keep it far enough back that the camera stays outside the avatar's head.")]
+    [Min(0.5f)]
+    [SerializeField] private float minThirdPersonDistance = 1.5f;
+
+    [Tooltip("How far one mouse-wheel notch, D-pad press or pinch step moves the camera, in metres.")]
+    [Min(0.05f)]
+    [SerializeField] private float zoomStepDistance = 0.5f;
+
+    [Tooltip("How long, in seconds, the camera takes to settle at a new zoom distance. 0 moves it instantly. Higher values glide.")]
+    [Range(0f, 0.5f)]
+    [SerializeField] private float zoomSmoothTime = 0.12f;
 
     private U3DInteractionManager _interactionManager;
 
@@ -68,10 +75,11 @@ public class U3DPlayerController : MonoBehaviour
     private float _runtimeOrbitSensitivity;
     private RuntimePlatform _currentPlatform;
 
-    private float currentTransitionValue = 0f;
-    private float targetTransitionValue = 0f;
+    private float targetCameraDistance = 0f;
+    private float _cameraDistanceVelocity = 0f;
     private bool isTransitioning = false;
-    private Vector3 originalFirstPersonPosition;
+
+    private const float FIRST_PERSON_CUTOFF = 0.3f;
 
     private Transform cameraPivot;
     private float cameraYaw = 0f;
@@ -117,10 +125,8 @@ public class U3DPlayerController : MonoBehaviour
     private bool isFlying;
     private bool isAutoRunning;
 
-    private float cameraPitch;
     private bool isFirstPerson = true;
     private Vector3 firstPersonPosition;
-    private Vector3 thirdPersonPosition;
     private float currentCameraDistance;
     private float targetFOV;
     private bool lookInverted;
@@ -271,7 +277,6 @@ public class U3DPlayerController : MonoBehaviour
         }
 
         firstPersonPosition = playerCamera.transform.localPosition;
-        thirdPersonPosition = firstPersonPosition + Vector3.back * thirdPersonCameraDistance;
         currentCameraDistance = 0f;
         targetFOV = defaultFOV;
         playerCamera.fieldOfView = defaultFOV;
@@ -294,8 +299,7 @@ public class U3DPlayerController : MonoBehaviour
         CalculateRuntimeSensitivity();
         ConfigureLocalPlayer();
 
-        if (enableAdvancedCamera && cameraPivot != null)
-            cameraYaw = transform.eulerAngles.y;
+        cameraYaw = transform.eulerAngles.y;
 
         _webXRManager = U3D.XR.U3DWebXRManager.Instance;
         if (_webXRManager != null)
@@ -303,9 +307,9 @@ public class U3DPlayerController : MonoBehaviour
 
         switch (perspectiveMode)
         {
-            case PerspectiveMode.FirstPersonOnly: SetFirstPerson(); break;
-            case PerspectiveMode.ThirdPersonOnly: SetThirdPerson(); break;
-            case PerspectiveMode.SmoothScroll: SetFirstPerson(); break;
+            case PerspectiveMode.FirstPersonOnly: SnapCameraDistance(0f); break;
+            case PerspectiveMode.ThirdPersonOnly: SnapCameraDistance(thirdPersonCameraDistance); break;
+            case PerspectiveMode.SmoothScroll: SnapCameraDistance(0f); break;
         }
 
         // Identity wiring: subscribe to the local-profile-ready event and apply
@@ -333,10 +337,6 @@ public class U3DPlayerController : MonoBehaviour
 
     void InitializeCameraPivot()
     {
-        if (!enableAdvancedCamera) return;
-
-        originalFirstPersonPosition = firstPersonPosition;
-
         GameObject pivotGO = new GameObject("CameraPivot");
         cameraPivot = pivotGO.transform;
         cameraPivot.SetParent(transform);
@@ -354,34 +354,32 @@ public class U3DPlayerController : MonoBehaviour
 
     void UpdateCameraTransitionPosition()
     {
-        if (cameraPivot == null || playerCamera == null) return;
+        if (playerCamera == null) return;
 
-        Vector3 targetPosition;
+        // Offset from the first-person eye point. Height blends from the prefab Camera Y
+        // toward thirdPersonCameraHeight in proportion to how far out the camera is.
+        Vector3 offset = Vector3.zero;
 
-        if (currentTransitionValue <= 0.01f)
+        if (currentCameraDistance > 0.001f)
         {
-            // Pure first-person: camera sits exactly at firstPersonPosition,
-            // which is the prefab Camera child's local position captured in Awake.
-            targetPosition = Vector3.zero;
-        }
-        else
-        {
-            // Linearly interpolate distance and height from first-person to third-person
-            // values across the transition. First-person height is firstPersonPosition.y
-            // (the prefab Camera Y), third-person height is the Inspector field.
-            float distance = Mathf.Lerp(0f, thirdPersonCameraDistance, currentTransitionValue);
-            float heightAtTransition = Mathf.Lerp(firstPersonPosition.y, thirdPersonCameraHeight, currentTransitionValue);
-            float relativeHeight = heightAtTransition - firstPersonPosition.y;
-            targetPosition = new Vector3(0f, relativeHeight, -distance);
+            float t = thirdPersonCameraDistance > 0f
+                ? Mathf.Clamp01(currentCameraDistance / thirdPersonCameraDistance)
+                : 1f;
+            float height = Mathf.Lerp(firstPersonPosition.y, thirdPersonCameraHeight, t);
+            offset = new Vector3(0f, height - firstPersonPosition.y, -currentCameraDistance);
         }
 
         if (isCrouching)
-            targetPosition.y += crouchCameraOffset;
+            offset.y += crouchCameraOffset;
 
-        if (currentTransitionValue > 0.01f && enableCameraCollision)
-            targetPosition = GetCollisionSafeCameraPosition(targetPosition);
+        // With CameraPivot the camera is its child, and the pivot already sits at the eye
+        // point. Without it the camera is a child of the player root.
+        Vector3 localPosition = cameraPivot != null ? offset : firstPersonPosition + offset;
 
-        playerCamera.transform.localPosition = targetPosition;
+        if (currentCameraDistance > 0.001f && enableCameraCollision)
+            localPosition = GetCollisionSafeCameraPosition(localPosition);
+
+        playerCamera.transform.localPosition = localPosition;
     }
 
     void InitializeComponents()
@@ -465,7 +463,6 @@ public class U3DPlayerController : MonoBehaviour
         HandleButtonInputs(input);
         HandleTeleportPress(input);
         HandleLook(input);
-        HandleLocalCameraRender();
         HandleCameraPositioning();
         HandleZoom();
     }
@@ -593,11 +590,47 @@ public class U3DPlayerController : MonoBehaviour
 
         if (perspectiveMode == PerspectiveMode.SmoothScroll && Mathf.Abs(input.PerspectiveScroll) > 0.1f)
         {
-            if (input.PerspectiveScroll > 0.1f && !isFirstPerson)
-                SetFirstPerson();
-            else if (input.PerspectiveScroll < -0.1f && isFirstPerson)
-                SetThirdPerson();
+            // VR keeps the two-position toggle: its binding is a stick click, and a smooth
+            // camera dolly in a headset is a motion-sickness trigger.
+            if (_isInVRMode)
+            {
+                if (input.PerspectiveScroll > 0.1f && !isFirstPerson)
+                    SetFirstPerson();
+                else if (input.PerspectiveScroll < -0.1f && isFirstPerson)
+                    SetThirdPerson();
+            }
+            else
+            {
+                StepCameraDistance(input.PerspectiveScroll);
+            }
         }
+    }
+
+    /// <summary>
+    /// Moves the zoom target by one step per wheel notch. Positive scroll moves the camera
+    /// closer. The camera stops at minThirdPersonDistance before entering first person, so
+    /// it never rests inside the avatar's head. Fractional values from a trackpad move it
+    /// by a fraction of a step.
+    /// </summary>
+    void StepCameraDistance(float scroll)
+    {
+        float step = Mathf.Clamp(scroll, -1f, 1f) * zoomStepDistance;
+        float maxDistance = Mathf.Max(thirdPersonCameraDistance, 0.5f);
+        float minDistance = Mathf.Min(minThirdPersonDistance, maxDistance);
+
+        if (targetCameraDistance <= 0f)
+        {
+            if (step < 0f)
+                targetCameraDistance = minDistance;
+            return;
+        }
+
+        float next = targetCameraDistance - step;
+
+        if (next < minDistance)
+            next = targetCameraDistance > minDistance + 0.001f ? minDistance : 0f;
+
+        targetCameraDistance = Mathf.Min(next, maxDistance);
     }
 
     void HandleTeleportPress(U3DPlayerInputState input)
@@ -666,49 +699,24 @@ public class U3DPlayerController : MonoBehaviour
 
         HandleAdvancedMouseControls(input);
 
+        if (cameraPivot == null) return;
+
         if (enableAlwaysFreeLook && !isLeftMouseDragging && !isRightMouseDragging && !isBothMouseForward)
         {
-            if (enableAdvancedCamera && cameraPivot != null)
-            {
-                if (Mathf.Abs(finalLookInput.x) > 0.01f)
-                {
-                    transform.Rotate(Vector3.up, finalLookInput.x);
-                    cameraYaw += finalLookInput.x;
-                }
-
-                if (Mathf.Abs(finalLookInput.y) > 0.01f)
-                {
-                    cameraPitchAdvanced -= finalLookInput.y;
-                    cameraPitchAdvanced = Mathf.Clamp(cameraPitchAdvanced, lookDownLimit, lookUpLimit);
-                    CameraPitch = cameraPitchAdvanced;
-                }
-
-                cameraPivot.localRotation = Quaternion.Euler(cameraPitchAdvanced, 0f, 0f);
-            }
-            else
-            {
-                if (Mathf.Abs(finalLookInput.x) > 0.01f)
-                    transform.Rotate(Vector3.up, finalLookInput.x);
-
-                if (Mathf.Abs(finalLookInput.y) > 0.01f)
-                {
-                    cameraPitch -= finalLookInput.y;
-                    cameraPitch = Mathf.Clamp(cameraPitch, lookDownLimit, lookUpLimit);
-                    CameraPitch = cameraPitch;
-                }
-            }
-        }
-        else if (!enableAlwaysFreeLook && !isLeftMouseDragging && !isRightMouseDragging && !enableAdvancedCamera)
-        {
             if (Mathf.Abs(finalLookInput.x) > 0.01f)
+            {
                 transform.Rotate(Vector3.up, finalLookInput.x);
+                cameraYaw += finalLookInput.x;
+            }
 
             if (Mathf.Abs(finalLookInput.y) > 0.01f)
             {
-                cameraPitch -= finalLookInput.y;
-                cameraPitch = Mathf.Clamp(cameraPitch, lookDownLimit, lookUpLimit);
-                CameraPitch = cameraPitch;
+                cameraPitchAdvanced -= finalLookInput.y;
+                cameraPitchAdvanced = Mathf.Clamp(cameraPitchAdvanced, lookDownLimit, lookUpLimit);
+                CameraPitch = cameraPitchAdvanced;
             }
+
+            cameraPivot.localRotation = Quaternion.Euler(cameraPitchAdvanced, 0f, 0f);
         }
     }
 
@@ -736,7 +744,7 @@ public class U3DPlayerController : MonoBehaviour
 
     void HandleAdvancedMouseControls(U3DPlayerInputState input)
     {
-        if (!enableAdvancedCamera || cameraPivot == null) return;
+        if (cameraPivot == null) return;
 
         bool wasLeftMouseDragging = isLeftMouseDragging;
 
@@ -810,32 +818,25 @@ public class U3DPlayerController : MonoBehaviour
 
         if (IsClimbing) return;
 
-        Vector2 advancedMovement = HandleAdvancedKeyboardMovement(input);
+        HandleKeyboardTurn(input);
 
-        if (isBothMouseForward) advancedMovement.y = 1f;
-        if (isAutoRunning) advancedMovement.y = 1f;
+        // A and D are bound to both the turn actions and the Move composite. While a turn key
+        // is down, the composite's sideways value came from that same key, so it is dropped
+        // and the player turns without sliding. Q/E strafe. Arrow keys and the gamepad stick
+        // still strafe with their sideways value.
+        Vector2 finalMovement = moveInput;
+        if (input.TurnLeft || input.TurnRight) finalMovement.x = 0f;
+        if (input.StrafeLeft) finalMovement.x = -1f;
+        if (input.StrafeRight) finalMovement.x = 1f;
+        if (isBothMouseForward || isAutoRunning) finalMovement.y = 1f;
 
-        Vector2 finalMovement = (advancedMovement.magnitude > 0.1f) ? advancedMovement : moveInput;
+        bool isStartingToMove = finalMovement.magnitude > 0.1f && !IsMoving;
+        if (isStartingToMove && !isRightMouseDragging)
+            transform.rotation = Quaternion.Euler(0, cameraYaw, 0);
 
-        if (enableAdvancedCamera && cameraPivot != null)
-        {
-            bool isStartingToMove = (finalMovement.magnitude > 0.1f && !IsMoving);
-            if (isStartingToMove && !isRightMouseDragging)
-                transform.rotation = Quaternion.Euler(0, cameraYaw, 0);
-        }
-
-        Vector3 forward, right;
-
-        if (enableAdvancedCamera && cameraPivot != null)
-        {
-            forward = cameraPivot.forward;
-            right = cameraPivot.right;
-        }
-        else
-        {
-            forward = playerCamera.transform.forward;
-            right = playerCamera.transform.right;
-        }
+        Transform basis = cameraPivot != null ? cameraPivot : playerCamera.transform;
+        Vector3 forward = basis.forward;
+        Vector3 right = basis.right;
 
         bool freeMovement = isFlying || IsSwimming;
 
@@ -869,40 +870,18 @@ public class U3DPlayerController : MonoBehaviour
         MoveIntent = ToBodyLocalIntent(moveDirection);
     }
 
-    Vector2 HandleAdvancedKeyboardMovement(U3DPlayerInputState input)
+    void HandleKeyboardTurn(U3DPlayerInputState input)
     {
-        Vector2 advancedMovement = Vector2.zero;
+        if (isRightMouseDragging) return;
 
-        if (moveInput.y != 0)
-            advancedMovement.y = moveInput.y;
+        float turn = 0f;
+        if (input.TurnLeft) turn -= 1f;
+        if (input.TurnRight) turn += 1f;
+        if (turn == 0f) return;
 
-        if (enableAdvancedCamera)
-        {
-            if (!isRightMouseDragging)
-            {
-                if (input.TurnLeft)
-                {
-                    float turnDelta = -characterTurnSpeed * Time.fixedDeltaTime;
-                    transform.Rotate(Vector3.up, turnDelta);
-                    if (cameraPivot != null) cameraYaw += turnDelta;
-                }
-                if (input.TurnRight)
-                {
-                    float turnDelta = characterTurnSpeed * Time.fixedDeltaTime;
-                    transform.Rotate(Vector3.up, turnDelta);
-                    if (cameraPivot != null) cameraYaw += turnDelta;
-                }
-            }
-
-            if (input.StrafeLeft) advancedMovement.x = -1f;
-            if (input.StrafeRight) advancedMovement.x = 1f;
-        }
-        else
-        {
-            advancedMovement.x = moveInput.x;
-        }
-
-        return advancedMovement;
+        float turnDelta = turn * characterTurnSpeed * Time.fixedDeltaTime;
+        transform.Rotate(Vector3.up, turnDelta);
+        cameraYaw += turnDelta;
     }
 
     /// <summary>
@@ -972,7 +951,6 @@ public class U3DPlayerController : MonoBehaviour
         if (_cursorManager != null)
             _cursorManager.SetVRMode(true);
 
-        cameraPitch = 0f;
         cameraPitchAdvanced = 0f;
 
         // Auto-run has no VR binding (the X button belongs to attachment removal), so a
@@ -1132,7 +1110,10 @@ public class U3DPlayerController : MonoBehaviour
         if (playerCamera != null)
         {
             cameraYaw = transform.eulerAngles.y;
-            cameraPitch = 0f;
+            cameraPitchAdvanced = 0f;
+            CameraPitch = 0f;
+            if (cameraPivot != null)
+                cameraPivot.localRotation = Quaternion.identity;
         }
 
         if (_cursorManager != null)
@@ -1368,14 +1349,6 @@ public class U3DPlayerController : MonoBehaviour
 
     // ==================== END VR/WebXR MODE HANDLING ====================
 
-    void HandleLocalCameraRender()
-    {
-        if (!enableMovement || playerCamera == null) return;
-        if (_isInVRMode) return;
-        if (!IsCursorLocked()) return;
-        playerCamera.transform.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
-    }
-
     void OnControllerColliderHit(ControllerColliderHit hit)
     {
         if (_pendingTrampoline != null) return;
@@ -1476,41 +1449,33 @@ public class U3DPlayerController : MonoBehaviour
     {
         if (_isInVRMode) return;
 
-        if (perspectiveMode == PerspectiveMode.SmoothScroll)
+        if (zoomSmoothTime <= 0f)
         {
-            if (Mathf.Abs(currentTransitionValue - targetTransitionValue) > 0.001f)
-            {
-                currentTransitionValue = Mathf.MoveTowards(
-                    currentTransitionValue,
-                    targetTransitionValue,
-                    Time.deltaTime / transitionTime
-                );
-                isTransitioning = true;
-            }
-            else
-            {
-                currentTransitionValue = targetTransitionValue;
-                isTransitioning = false;
-            }
-
-            UpdateCameraTransitionPosition();
+            currentCameraDistance = targetCameraDistance;
+            _cameraDistanceVelocity = 0f;
         }
-        else if (enableSmoothTransitions)
+        else
         {
-            Vector3 targetPosition = isFirstPerson ? firstPersonPosition : thirdPersonPosition;
+            currentCameraDistance = Mathf.SmoothDamp(
+                currentCameraDistance,
+                targetCameraDistance,
+                ref _cameraDistanceVelocity,
+                zoomSmoothTime);
 
-            if (isCrouching)
-                targetPosition.y += crouchCameraOffset;
-
-            if (enableCameraCollision && !isFirstPerson)
-                targetPosition = GetCollisionSafeCameraPosition(targetPosition);
-
-            playerCamera.transform.localPosition = Vector3.Lerp(
-                playerCamera.transform.localPosition,
-                targetPosition,
-                Time.deltaTime * perspectiveTransitionSpeed
-            );
+            if (Mathf.Abs(currentCameraDistance - targetCameraDistance) < 0.001f)
+            {
+                currentCameraDistance = targetCameraDistance;
+                _cameraDistanceVelocity = 0f;
+            }
         }
+
+        isTransitioning = currentCameraDistance != targetCameraDistance;
+
+        // Read from where the camera actually is, not where it is heading, so the avatar
+        // hides only once the camera is close enough to be inside the head.
+        isFirstPerson = currentCameraDistance < FIRST_PERSON_CUTOFF;
+
+        UpdateCameraTransitionPosition();
     }
 
     void HandleZoom()
@@ -1573,20 +1538,28 @@ public class U3DPlayerController : MonoBehaviour
         return intent.sqrMagnitude > 1f ? intent.normalized : intent;
     }
 
+    // VR toggle path. Outside VR, isFirstPerson is derived from the camera distance every
+    // frame in HandleCameraPositioning, so these only set where the camera goes on VR exit.
     void SetFirstPerson()
     {
         isFirstPerson = true;
-        currentCameraDistance = 0f;
-        if (perspectiveMode == PerspectiveMode.SmoothScroll)
-            targetTransitionValue = 0f;
+        targetCameraDistance = 0f;
     }
 
     void SetThirdPerson()
     {
         isFirstPerson = false;
-        currentCameraDistance = thirdPersonCameraDistance;
-        if (perspectiveMode == PerspectiveMode.SmoothScroll)
-            targetTransitionValue = 1f;
+        targetCameraDistance = thirdPersonCameraDistance;
+    }
+
+    void SnapCameraDistance(float distance)
+    {
+        targetCameraDistance = distance;
+        currentCameraDistance = distance;
+        _cameraDistanceVelocity = 0f;
+        isTransitioning = false;
+        isFirstPerson = distance < FIRST_PERSON_CUTOFF;
+        UpdateCameraTransitionPosition();
     }
 
     void LoadPlayerPreferences()
@@ -1713,7 +1686,8 @@ public class U3DPlayerController : MonoBehaviour
     public bool EnableAutoRun => enableAutoRun;
     public bool EnableTeleport => enableTeleport;
     public bool EnableViewZoom => enableViewZoom;
-    public bool EnableAdvancedCamera => enableAdvancedCamera;
+    /// <summary>Whether the mouse wheel moves the camera between first and third person.</summary>
+    public bool EnableScrollCameraDistance => perspectiveMode == PerspectiveMode.SmoothScroll;
     public Transform RawHmdReference => _rawHmdReference;
 
     /// <summary>
@@ -1779,7 +1753,10 @@ public class U3DPlayerController : MonoBehaviour
 
     public void SetCameraPitch(float pitch)
     {
-        cameraPitch = pitch;
+        cameraPitchAdvanced = Mathf.Clamp(pitch, lookDownLimit, lookUpLimit);
+        CameraPitch = cameraPitchAdvanced;
+        if (cameraPivot != null)
+            cameraPivot.localRotation = Quaternion.Euler(cameraPitchAdvanced, 0f, 0f);
     }
 
     public void SetSwimmingState(bool swimming)

@@ -249,8 +249,9 @@ namespace U3D.Input
                 _jumpHeld = false;
                 _crouchHeld = false;
 
-                // Center-zone vertical pinch feeds the same one-shot scroll value the mouse
-                // wheel uses; the controller already gates it on SmoothScroll perspective mode.
+                // Center-zone vertical pinch feeds the same scroll value the mouse wheel uses.
+                // Each signed one-shot moves the camera one zoom step; the controller gates it
+                // on SmoothScroll perspective mode.
                 if (Mathf.Abs(touchZones.PerspectiveScrollInput) > 0.1f)
                     _perspectiveScrollValue = touchZones.PerspectiveScrollInput;
 
@@ -309,11 +310,24 @@ namespace U3D.Input
                 if (_zoomAction != null)
                     _zoomHeld = _zoomAction.IsPressed();
 
+                // The wheel reports a value only on frames it turns. The D-pad reports a held
+                // level, which would step the zoom every frame it is down, so a gamepad counts
+                // once per press.
                 if (_perspectiveSwitchAction != null)
                 {
                     float scroll = _perspectiveSwitchAction.ReadValue<float>();
-                    if (Mathf.Abs(scroll) > 0.1f)
+                    var perspectiveControl = _perspectiveSwitchAction.activeControl;
+                    bool fromGamepad = perspectiveControl != null && perspectiveControl.device is Gamepad;
+
+                    if (fromGamepad)
+                    {
+                        if (_perspectiveSwitchAction.WasPressedThisFrame() && Mathf.Abs(scroll) > 0.1f)
+                            _perspectiveScrollValue = Mathf.Sign(scroll);
+                    }
+                    else if (Mathf.Abs(scroll) > 0.1f)
+                    {
                         _perspectiveScrollValue = scroll;
+                    }
                 }
 
                 if (_mouseLeftAction != null)
