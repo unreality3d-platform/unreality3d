@@ -35,6 +35,9 @@ namespace U3D
         [FormerlySerializedAs("loopSequence")]
         [SerializeField] private bool loopPlayback = false;
 
+        private const float StartTimeout = 1f;
+        private const float MinPitch = 0.01f;
+
         private AudioSource _sourceA;
         private AudioSource _sourceB;
         private AudioSource _activeSource;
@@ -175,12 +178,12 @@ namespace U3D
                     AudioClip clip = audioClips[i];
                     if (clip == null) continue;
 
-                    yield return StartCoroutine(PlayClipCoroutine(clip));
+                    yield return PlayClipCoroutine(clip);
 
                     if (!_isPlaying) yield break;
 
                     if (gapBetweenClips > 0f && i < audioClips.Count - 1)
-                        yield return new WaitForSeconds(gapBetweenClips);
+                        yield return new WaitForSecondsRealtime(gapBetweenClips);
                 }
             }
             while (loopPlayback && _isPlaying);
@@ -208,12 +211,12 @@ namespace U3D
                     AudioClip clip = audioClips[shuffledIndices[i]];
                     if (clip == null) continue;
 
-                    yield return StartCoroutine(PlayClipCoroutine(clip));
+                    yield return PlayClipCoroutine(clip);
 
                     if (!_isPlaying) yield break;
 
                     if (gapBetweenClips > 0f && i < shuffledIndices.Count - 1)
-                        yield return new WaitForSeconds(gapBetweenClips);
+                        yield return new WaitForSecondsRealtime(gapBetweenClips);
                 }
             }
             while (loopPlayback && _isPlaying);
@@ -230,17 +233,21 @@ namespace U3D
             if (useCrossfade)
             {
                 EnsureSecondSource();
-                yield return StartCoroutine(CrossfadeToClip(clip));
+                yield return CrossfadeToClip(clip);
             }
             else
             {
                 ApplyRandomization(_sourceA);
+                _sourceA.loop = false;
                 _sourceA.clip = clip;
                 _sourceA.volume = GetRandomizedVolume();
                 _sourceA.Play();
                 _activeSource = _sourceA;
 
-                yield return new WaitForSeconds(clip.length);
+                yield return WaitForStart(_sourceA);
+
+                while (_isPlaying && _sourceA.isPlaying)
+                    yield return null;
             }
         }
 
@@ -256,19 +263,21 @@ namespace U3D
             float targetVolume = GetRandomizedVolume();
 
             ApplyRandomization(incoming);
+            incoming.loop = false;
             incoming.clip = clip;
             incoming.volume = 0f;
             incoming.Play();
 
+            float fade = Mathf.Min(fadeDuration, PlayedLength(clip, incoming) * 0.5f);
             float outgoingStartVolume = (outgoing != null && outgoing.isPlaying) ? outgoing.volume : 0f;
             float elapsed = 0f;
 
-            while (elapsed < fadeDuration)
+            while (elapsed < fade)
             {
                 if (!_isPlaying) yield break;
 
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / fadeDuration);
+                elapsed += Time.unscaledDeltaTime;
+                float t = Mathf.Clamp01(elapsed / fade);
 
                 incoming.volume = Mathf.Lerp(0f, targetVolume, t);
                 if (outgoing != null && outgoing.isPlaying)
@@ -286,9 +295,10 @@ namespace U3D
 
             _activeSource = incoming;
 
-            float remainingTime = clip.length - fadeDuration;
-            if (remainingTime > 0f)
-                yield return new WaitForSeconds(remainingTime);
+            yield return WaitForStart(incoming);
+
+            while (_isPlaying && incoming.isPlaying && RemainingPlayTime(incoming) > fade)
+                yield return null;
         }
 
         // -----------------------------──────────────────
@@ -303,7 +313,7 @@ namespace U3D
 
             while (elapsed < fadeDuration)
             {
-                elapsed += Time.deltaTime;
+                elapsed += Time.unscaledDeltaTime;
                 float t = Mathf.Clamp01(elapsed / fadeDuration);
 
                 if (_sourceA.isPlaying)
@@ -315,6 +325,29 @@ namespace U3D
             }
 
             StopAllSources();
+        }
+
+        // -----------------------------──────────────────
+        // Playback Timing
+        // -----------------------------──────────────────
+
+        private IEnumerator WaitForStart(AudioSource source)
+        {
+            float deadline = Time.realtimeSinceStartup + StartTimeout;
+            while (_isPlaying && !source.isPlaying && Time.realtimeSinceStartup < deadline)
+                yield return null;
+        }
+
+        private static float PlayedLength(AudioClip clip, AudioSource source)
+        {
+            return clip.length / Mathf.Max(Mathf.Abs(source.pitch), MinPitch);
+        }
+
+        private static float RemainingPlayTime(AudioSource source)
+        {
+            if (source.clip == null) return 0f;
+            float remainingContent = Mathf.Max(0f, source.clip.length - source.time);
+            return remainingContent / Mathf.Max(Mathf.Abs(source.pitch), MinPitch);
         }
 
         // -----------------------------──────────────────
@@ -387,6 +420,7 @@ namespace U3D
 
             _sourceB = gameObject.AddComponent<AudioSource>();
             _sourceB.playOnAwake = false;
+            _sourceB.loop = false;
             _sourceB.outputAudioMixerGroup = _sourceA.outputAudioMixerGroup;
             _sourceB.spatialBlend = _sourceA.spatialBlend;
             _sourceB.minDistance = _sourceA.minDistance;
