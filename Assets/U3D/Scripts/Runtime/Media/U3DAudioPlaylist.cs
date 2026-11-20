@@ -40,6 +40,7 @@ namespace U3D
 
         private AudioSource _sourceA;
         private AudioSource _sourceB;
+        private AudioSource _oneShotSource;
         private AudioSource _activeSource;
         private Coroutine _playbackCoroutine;
         private Coroutine _fadeOutCoroutine;
@@ -87,8 +88,17 @@ namespace U3D
             AudioClip clip = GetRandomClip();
             if (clip == null) return;
 
-            ApplyRandomization(_sourceA);
-            _sourceA.PlayOneShot(clip, GetRandomizedVolume());
+            if (_fadeOutCoroutine != null)
+            {
+                StopCoroutine(_fadeOutCoroutine);
+                _fadeOutCoroutine = null;
+                StopAllSources();
+            }
+
+            EnsureOneShotSource();
+            _oneShotSource.volume = 1f;
+            ApplyRandomization(_oneShotSource);
+            _oneShotSource.PlayOneShot(clip, GetRandomizedVolume());
         }
 
         public void PlaySequence()
@@ -115,9 +125,15 @@ namespace U3D
                 _playbackCoroutine = null;
             }
 
+            if (_fadeOutCoroutine != null)
+            {
+                StopCoroutine(_fadeOutCoroutine);
+                _fadeOutCoroutine = null;
+            }
+
             _isPlaying = false;
 
-            if (fadeOutOnStop && (_sourceA.isPlaying || (_sourceB != null && _sourceB.isPlaying)))
+            if (fadeOutOnStop && IsAnySourcePlaying())
             {
                 _fadeOutCoroutine = StartCoroutine(FadeOutAllCoroutine());
             }
@@ -309,6 +325,7 @@ namespace U3D
         {
             float startVolumeA = _sourceA.isPlaying ? _sourceA.volume : 0f;
             float startVolumeB = (_sourceB != null && _sourceB.isPlaying) ? _sourceB.volume : 0f;
+            float startVolumeOneShot = (_oneShotSource != null && _oneShotSource.isPlaying) ? _oneShotSource.volume : 0f;
             float elapsed = 0f;
 
             while (elapsed < fadeDuration)
@@ -320,11 +337,14 @@ namespace U3D
                     _sourceA.volume = Mathf.Lerp(startVolumeA, 0f, t);
                 if (_sourceB != null && _sourceB.isPlaying)
                     _sourceB.volume = Mathf.Lerp(startVolumeB, 0f, t);
+                if (_oneShotSource != null && _oneShotSource.isPlaying)
+                    _oneShotSource.volume = Mathf.Lerp(startVolumeOneShot, 0f, t);
 
                 yield return null;
             }
 
             StopAllSources();
+            _fadeOutCoroutine = null;
         }
 
         // -----------------------------──────────────────
@@ -414,25 +434,46 @@ namespace U3D
             return indices;
         }
 
+        private bool IsAnySourcePlaying()
+        {
+            return (_sourceA != null && _sourceA.isPlaying)
+                || (_sourceB != null && _sourceB.isPlaying)
+                || (_oneShotSource != null && _oneShotSource.isPlaying);
+        }
+
         private void EnsureSecondSource()
         {
-            if (_sourceB != null) return;
+            if (_sourceB == null)
+                _sourceB = CreateMatchingSource();
+        }
 
-            _sourceB = gameObject.AddComponent<AudioSource>();
-            _sourceB.playOnAwake = false;
-            _sourceB.loop = false;
-            _sourceB.outputAudioMixerGroup = _sourceA.outputAudioMixerGroup;
-            _sourceB.spatialBlend = _sourceA.spatialBlend;
-            _sourceB.minDistance = _sourceA.minDistance;
-            _sourceB.maxDistance = _sourceA.maxDistance;
-            _sourceB.rolloffMode = _sourceA.rolloffMode;
-            _sourceB.dopplerLevel = _sourceA.dopplerLevel;
-            _sourceB.spread = _sourceA.spread;
-            _sourceB.priority = _sourceA.priority;
-            _sourceB.reverbZoneMix = _sourceA.reverbZoneMix;
-            _sourceB.bypassEffects = _sourceA.bypassEffects;
-            _sourceB.bypassListenerEffects = _sourceA.bypassListenerEffects;
-            _sourceB.bypassReverbZones = _sourceA.bypassReverbZones;
+        private void EnsureOneShotSource()
+        {
+            if (_oneShotSource == null)
+                _oneShotSource = CreateMatchingSource();
+        }
+
+        private AudioSource CreateMatchingSource()
+        {
+            AudioSource source = _sourceA.gameObject.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.loop = false;
+            source.volume = 1f;
+            source.pitch = _originalPitch;
+            source.mute = _sourceA.mute;
+            source.outputAudioMixerGroup = _sourceA.outputAudioMixerGroup;
+            source.spatialBlend = _sourceA.spatialBlend;
+            source.minDistance = _sourceA.minDistance;
+            source.maxDistance = _sourceA.maxDistance;
+            source.rolloffMode = _sourceA.rolloffMode;
+            source.dopplerLevel = _sourceA.dopplerLevel;
+            source.spread = _sourceA.spread;
+            source.priority = _sourceA.priority;
+            source.reverbZoneMix = _sourceA.reverbZoneMix;
+            source.bypassEffects = _sourceA.bypassEffects;
+            source.bypassListenerEffects = _sourceA.bypassListenerEffects;
+            source.bypassReverbZones = _sourceA.bypassReverbZones;
+            return source;
         }
 
         private void StopPlaybackImmediate()
@@ -465,6 +506,12 @@ namespace U3D
                 _sourceB.Stop();
                 _sourceB.pitch = _originalPitch;
             }
+            if (_oneShotSource != null)
+            {
+                _oneShotSource.Stop();
+                _oneShotSource.pitch = _originalPitch;
+                _oneShotSource.volume = 1f;
+            }
         }
 
         private void OnDisable()
@@ -477,6 +524,8 @@ namespace U3D
             StopPlaybackImmediate();
             if (_sourceB != null)
                 Destroy(_sourceB);
+            if (_oneShotSource != null)
+                Destroy(_oneShotSource);
         }
 
         private void Reset()
